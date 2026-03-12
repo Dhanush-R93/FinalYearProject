@@ -123,15 +123,16 @@ serve(async (req: Request) => {
         const text = new TextDecoder().decode(chunk);
         for (const line of text.split("\n")) {
           const trimmed = line.trim();
-          if (!trimmed || trimmed === "data: [DONE]") continue;
+          // ✅ Fixed: properly skip empty/done/ping lines
+          if (!trimmed || trimmed === "data: [DONE]" || trimmed.startsWith(": ")) continue;
 
           if (trimmed.startsWith("data: ")) {
             try {
               const event = JSON.parse(trimmed.slice(6));
-              // Extract text delta from content_block_delta events
               if (
                 event.type === "content_block_delta" &&
-                event.delta?.type === "text_delta"
+                event.delta?.type === "text_delta" &&
+                event.delta.text
               ) {
                 const openAIChunk = JSON.stringify({
                   choices: [{ delta: { content: event.delta.text } }],
@@ -140,12 +141,13 @@ serve(async (req: Request) => {
                   new TextEncoder().encode(`data: ${openAIChunk}\n\n`)
                 );
               }
+              // ✅ Fixed: emit [DONE] when stream ends
+              if (event.type === "message_stop") {
+                controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              }
             } catch (_) {}
           }
         }
-      },
-      flush(controller) {
-        controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
       },
     });
 

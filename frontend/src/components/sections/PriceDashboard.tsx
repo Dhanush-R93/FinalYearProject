@@ -115,9 +115,13 @@ export function PriceDashboard() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("ingest-prices");
+      // ✅ Fixed: correct edge function name is "daily-pipeline" not "ingest-prices"
+      const { data, error } = await supabase.functions.invoke("daily-pipeline");
       if (error) throw error;
-      toast.success(`Synced ${data.records_inserted} price records from ${data.commodities_updated} commodities`);
+      const msg = data?.records_inserted != null
+        ? `Synced ${data.records_inserted} price records from ${data.commodities_updated ?? "?"} commodities`
+        : "Price sync triggered successfully";
+      toast.success(msg);
       refetch();
     } catch (err: any) {
       toast.error(err.message || "Failed to sync prices");

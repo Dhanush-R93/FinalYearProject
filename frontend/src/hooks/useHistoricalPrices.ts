@@ -12,7 +12,7 @@ export function useHistoricalPrices(commodityId?: string, days = 30) {
 
       const { data, error } = await supabase
         .from("price_data")
-        .select("price, recorded_at, mandi_name, source")
+        .select("price, min_price, max_price, recorded_at, mandi_name, source")  // ✅ Fixed: added min_price, max_price
         .eq("commodity_id", commodityId)
         .gte("recorded_at", fromDate)
         .order("recorded_at", { ascending: true });
@@ -20,19 +20,24 @@ export function useHistoricalPrices(commodityId?: string, days = 30) {
       if (error) throw error;
 
       // Group by date and average prices across mandis
-      const byDate = new Map<string, { prices: number[]; date: string }>();
+      const byDate = new Map<string, { prices: number[]; mins: number[]; maxs: number[]; date: string }>();
       for (const row of data) {
         const dateKey = format(new Date(row.recorded_at), "yyyy-MM-dd");
         if (!byDate.has(dateKey)) {
-          byDate.set(dateKey, { prices: [], date: dateKey });
+          byDate.set(dateKey, { prices: [], mins: [], maxs: [], date: dateKey });
         }
-        byDate.get(dateKey)!.prices.push(row.price);
+        const entry = byDate.get(dateKey)!;
+        entry.prices.push(row.price);
+        // ✅ Fixed: use actual min/max from DB columns (added in migration 003)
+        if (row.min_price) entry.mins.push(row.min_price);
+        if (row.max_price) entry.maxs.push(row.max_price);
       }
 
       return Array.from(byDate.values()).map((entry) => {
         const avg = entry.prices.reduce((a, b) => a + b, 0) / entry.prices.length;
-        const min = Math.min(...entry.prices);
-        const max = Math.max(...entry.prices);
+        // Fall back to modal price if min/max not populated
+        const min = entry.mins.length ? Math.min(...entry.mins) : Math.min(...entry.prices);
+        const max = entry.maxs.length ? Math.max(...entry.maxs) : Math.max(...entry.prices);
         return {
           date: entry.date,
           dateLabel: format(new Date(entry.date), "MMM dd"),

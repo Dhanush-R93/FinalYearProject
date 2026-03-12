@@ -70,43 +70,30 @@ export function useLatestPrices() {
   return useQuery({
     queryKey: ["latest_prices"],
     queryFn: async () => {
-      // Get commodities with their latest prices
-      const { data: commodities, error: commoditiesError } = await supabase
-        .from("commodities")
-        .select("*");
-      
-      if (commoditiesError) throw commoditiesError;
+      // ✅ Fixed: single query via DB view (replaces N+1 queries)
+      const { data, error } = await supabase
+        .from("latest_prices_view")
+        .select("*")
+        .order("commodity_name");
 
-      // For each commodity, get the two most recent prices to calculate change
-      const pricesWithChange = await Promise.all(
-        commodities.map(async (commodity) => {
-          const { data: prices, error: pricesError } = await supabase
-            .from("price_data")
-            .select("*")
-            .eq("commodity_id", commodity.id)
-            .order("recorded_at", { ascending: false })
-            .limit(2);
-          
-          if (pricesError) throw pricesError;
+      if (error) throw error;
 
-          const currentPrice = prices?.[0]?.price || 0;
-          const previousPrice = prices?.[1]?.price || currentPrice;
-          const change = currentPrice - previousPrice;
-          const changePercent = previousPrice > 0 ? (change / previousPrice) * 100 : 0;
-
-          return {
-            ...commodity,
-            price: currentPrice,
-            change,
-            changePercent,
-            mandiName: prices?.[0]?.mandi_name || "N/A",
-            recordedAt: prices?.[0]?.recorded_at,
-            source: prices?.[0]?.source || null,
-          };
-        })
-      );
-
-      return pricesWithChange;
+      // Map DB view columns → component-friendly field names
+      return (data ?? []).map((row: any) => ({
+        id:            row.commodity_id,
+        name:          row.commodity_name,
+        icon:          row.icon,
+        unit:          row.unit,
+        category:      row.category,
+        price:         row.current_price ?? 0,        // ✅ Fixed: was "price", view returns "current_price"
+        change:        row.price_change ?? 0,
+        changePercent: row.change_percent ?? 0,
+        mandiName:     row.mandi_name ?? "N/A",
+        recordedAt:    row.recorded_at ?? null,
+        source:        row.source ?? null,
+      }));
     },
+    refetchInterval: 5 * 60 * 1000,
+    staleTime:       2 * 60 * 1000,
   });
 }

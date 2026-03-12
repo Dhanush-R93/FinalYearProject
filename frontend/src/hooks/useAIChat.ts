@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -8,10 +8,23 @@ export function useAIChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ✅ Fixed: use ref to avoid stale closure over messages in sendMessage
+  const messagesRef = useRef<Message[]>([]);
+
+  // Keep ref in sync with state
+  const updateMessages = (updater: (prev: Message[]) => Message[]) => {
+    setMessages((prev) => {
+      const next = updater(prev);
+      messagesRef.current = next;
+      return next;
+    });
+  };
 
   const sendMessage = useCallback(async (input: string) => {
     const userMsg: Message = { role: "user", content: input };
-    setMessages((prev) => [...prev, userMsg]);
+    // ✅ Fixed: read from ref (always current), not closed-over state
+    const currentMessages = [...messagesRef.current, userMsg];
+    updateMessages(() => currentMessages);
     setIsLoading(true);
     setError(null);
 
@@ -19,7 +32,7 @@ export function useAIChat() {
 
     const updateAssistant = (chunk: string) => {
       assistantContent += chunk;
-      setMessages((prev) => {
+      updateMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
           return prev.map((m, i) =>
@@ -35,10 +48,84 @@ export function useAIChat() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          // ✅ Fixed: Supabase edge functions need the anon key, not publishable key env var name mismatch
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY}`,
         },
-        body: JSON.stringify({ messages: [...messages, userMsg] }),
+        body: JSON.stringify({ messages: currentMessages }),
       });
+
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        throw new Error(errorData.error || `Request failed with status ${resp.status}`);
+      }
+
+      if (!resp.body) throw new Error("No response body");
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex: number;
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          let line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          if (line.startsWith(":") || line.trim() === "") continue;
+          if (!line.startsWith("data: ")) continue;
+
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === "[DONE]") break;
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) updateAssistant(content);
+          } catch {
+            buffer = line + "\n" + buffer;
+            break;
+          }
+        }
+      }
+
+      // Flush remaining buffer
+      if (buffer.trim()) {
+        for (let raw of buffer.split("\n")) {
+          if (!raw) continue;
+          if (raw.endsWith("\r")) raw = raw.slice(0, -1);
+          if (raw.startsWith(":") || raw.trim() === "") continue;
+          if (!raw.startsWith("data: ")) continue;
+          const jsonStr = raw.slice(6).trim();
+          if (jsonStr === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) updateAssistant(content);
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.error("AI Chat error:", e);
+      setError(e instanceof Error ? e.message : "Failed to get response");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []); // ✅ Empty deps: no stale closure since we use ref
+
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+    messagesRef.current = [];
+    setError(null);
+  }, []);
+
+  return { messages, isLoading, error, sendMessage, clearMessages };
+}
 
       if (!resp.ok) {
         const errorData = await resp.json().catch(() => ({}));
