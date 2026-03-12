@@ -21,8 +21,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Model, Input  # type: ignore
 from tensorflow.keras.layers import (  # type: ignore
-    LSTM, Dense, Dropout, Attention, GlobalAveragePooling1D,
-    Concatenate, LayerNormalization,
+    LSTM, Dense, Dropout, GlobalAveragePooling1D,
+    LayerNormalization,
 )
 from tensorflow.keras.callbacks import (  # type: ignore
     EarlyStopping, ReduceLROnPlateau, ModelCheckpoint,
@@ -62,10 +62,8 @@ def build_model(input_shape: tuple) -> Model:
     lstm_out = Dropout(DROPOUT_RATE, name="drop_2")(lstm_out)
     lstm_out = LayerNormalization(name="norm_2")(lstm_out)
 
-    # ── Attention: query=last step, value=all steps
-    query = lstm_out[:, -1:, :]          # (batch, 1, units)
-    attn_out = Attention(name="attention")([query, lstm_out])  # (batch, 1, units)
-    attn_out = tf.squeeze(attn_out, axis=1)  # (batch, units)
+    # ── Attention: use GlobalAveragePooling instead of squeeze
+    attn_out = GlobalAveragePooling1D(name="attention_pool")(lstm_out)
 
     # ── Dense head
     x = Dense(64, activation="relu", name="dense_1")(attn_out)
