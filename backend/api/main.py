@@ -176,10 +176,13 @@ async def get_live_prices(
             raise HTTPException(404, f"No live price data for {commodity}")
 
         records = df.to_dict(orient="records")
-        # Convert Timestamps to strings for JSON
+        # Convert Timestamps to strings + quintal→kg (govt API is per quintal)
         for r in records:
             if "date" in r and hasattr(r["date"], "isoformat"):
                 r["date"] = r["date"].isoformat()
+            for price_col in ["modal_price", "min_price", "max_price"]:
+                if price_col in r and r[price_col]:
+                    r[price_col] = round(float(r[price_col]) / 100, 2)
 
         return {
             "commodity":  commodity,
