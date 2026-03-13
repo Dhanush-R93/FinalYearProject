@@ -1,39 +1,42 @@
 """
 services/agmarknet_fetcher.py
-──────────────────────────────
-Fetches real vegetable prices - works WITHOUT any API key!
-Uses data.gov.in public demo key automatically.
-If you register and get your own key, add it to .env for more requests.
+Uses YOUR real data.gov.in API key from .env file
 """
-
+import os
 import logging
 import asyncio
 from datetime import date, timedelta
 from typing import Optional
 import httpx
 import pandas as pd
+from dotenv import load_dotenv
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 PUBLIC_BASE = "https://api.data.gov.in/resource"
 AGMARKNET_RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
-PUBLIC_DEMO_KEY = "579b464db66ec23d318a903939b7"
+
+# Read your real API key from .env
+_raw_key = os.getenv("DATA_GOV_API_KEY", "")
+DEMO_KEY  = "579b464db66ec23d318a903939b7"
+API_KEY   = _raw_key if _raw_key and _raw_key != "YOUR_DATA_GOV_IN_API_KEY" else DEMO_KEY
 
 try:
-    from config import DATA_GOV_API_KEY, TRACKED_COMMODITIES
-    API_KEY = DATA_GOV_API_KEY if DATA_GOV_API_KEY != "YOUR_DATA_GOV_IN_API_KEY" else PUBLIC_DEMO_KEY
+    from config import TRACKED_COMMODITIES
 except Exception:
-    API_KEY = PUBLIC_DEMO_KEY
     TRACKED_COMMODITIES = [
         "Tomato","Onion","Potato","Brinjal","Cabbage",
         "Cauliflower","Carrot","Beans","Capsicum","Lady Finger",
+        "Bitter Gourd","Bottle Gourd","Drumstick","Pumpkin","Spinach",
     ]
 
+# Real wholesale base prices ₹/quintal (govt API unit)
 SAMPLE_BASE_PRICES = {
-    "Tomato":2000,"Onion":1500,"Potato":1200,"Brinjal":1800,
-    "Cabbage":800,"Cauliflower":1500,"Carrot":2000,"Beans":3000,
-    "Capsicum":3500,"Lady Finger":2500,"Bitter Gourd":2800,
-    "Spinach":1000,"Pumpkin":900,"Drumstick":2200,"Bottle Gourd":800,
+    "Tomato":4000,"Onion":2800,"Potato":2200,"Brinjal":3500,
+    "Cabbage":2000,"Cauliflower":4200,"Carrot":3800,"Beans":6500,
+    "Capsicum":6000,"Lady Finger":4500,"Bitter Gourd":5000,
+    "Bottle Gourd":1800,"Drumstick":5500,"Pumpkin":2500,"Spinach":3000,
 }
 
 async def fetch_agmarknet_prices(
@@ -59,13 +62,18 @@ async def fetch_agmarknet_prices(
     if state:
         params["filters[State]"] = state
 
+    logger.info(f"Fetching {commodity} with key: {API_KEY[:20]}...")
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(f"{PUBLIC_BASE}/{AGMARKNET_RESOURCE_ID}", params=params)
             resp.raise_for_status()
             records = resp.json().get("records", [])
+
         if not records:
+            logger.warning(f"No records for {commodity}, using sample data")
             return _generate_sample_data(commodity, from_date, to_date)
+
         df = pd.DataFrame(records)
         col_map = {
             "Arrival_Date":"date","Commodity":"commodity","State":"state",
@@ -80,27 +88,35 @@ async def fetch_agmarknet_prices(
         for col in ["min_price","max_price","modal_price"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-        logger.info(f"✅ Fetched {len(df)} real records for {commodity}")
+        logger.info(f"✅ Fetched {len(df)} REAL records for {commodity}")
         return df.dropna(subset=["modal_price"]).reset_index(drop=True)
+
     except Exception as e:
         logger.warning(f"API unavailable ({e}), using sample data for {commodity}")
         return _generate_sample_data(commodity, from_date, to_date)
 
+
 def _generate_sample_data(commodity: str, from_date: date, to_date: date) -> pd.DataFrame:
     import numpy as np
-    base = SAMPLE_BASE_PRICES.get(commodity, 1500)
+    # Base price per quintal (real wholesale rates)
+    base = SAMPLE_BASE_PRICES.get(commodity, 3000)
     dates = pd.date_range(from_date, to_date, freq="D")
-    np.random.seed(hash(commodity) % 2**32)
+    np.random.seed(hash(commodity) % 2**31)
     rows, price = [], float(base)
     for d in dates:
         m = d.month
-        factor = 1.15 if m in [6,7,8] else (0.90 if m in [12,1,2] else 1.0)
-        price = max(price * (1 + float(np.random.uniform(-0.03, 0.03))) * factor, base * 0.4)
-        rows.append({"date":d,"commodity":commodity,"state":"Tamil Nadu",
-                     "district":"Chennai","mandi":"Koyambedu",
-                     "min_price":round(price*0.85,2),"max_price":round(price*1.15,2),
-                     "modal_price":round(price,2)})
+        factor = 1.20 if m in [4,5,6] else (0.85 if m in [11,12,1] else 1.0)
+        price = max(price * (1 + float(np.random.uniform(-0.04, 0.04))) * factor, base * 0.6)
+        price = min(price, base * 1.8)
+        rows.append({
+            "date": d, "commodity": commodity,
+            "state": "Tamil Nadu", "district": "Chennai", "mandi": "Koyambedu",
+            "min_price": round(price * 0.87, 2),
+            "max_price": round(price * 1.13, 2),
+            "modal_price": round(price, 2),
+        })
     return pd.DataFrame(rows)
+
 
 async def fetch_today_prices(state: Optional[str] = None) -> pd.DataFrame:
     today, week_ago = date.today(), date.today() - timedelta(days=7)
@@ -114,6 +130,7 @@ async def fetch_today_prices(state: Optional[str] = None) -> pd.DataFrame:
         except Exception as e:
             logger.warning(f"Skipping {commodity}: {e}")
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
 
 async def fetch_all_commodities(days: int = 365, state: Optional[str] = None) -> dict:
     from_date = date.today() - timedelta(days=days)
