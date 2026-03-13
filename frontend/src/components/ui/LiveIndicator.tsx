@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 interface LiveIndicatorProps {
-  lastUpdate?: Date | null;
+  lastUpdate?: Date | string | null;
   className?: string;
 }
 
@@ -19,11 +19,16 @@ export function LiveIndicator({ lastUpdate, className }: LiveIndicatorProps) {
   );
 }
 
-function formatTimeAgo(date: Date): string {
-  const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
-  
-  if (seconds < 60) return "just now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
+function formatTimeAgo(date: Date | string): string {
+  try {
+    const d = typeof date === "string" ? new Date(date) : date;
+    if (!d || isNaN(d.getTime())) return "just now";
+    const seconds = Math.floor((new Date().getTime() - d.getTime()) / 1000);
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
+  } catch {
+    return "just now";
+  }
 }
