@@ -1,115 +1,157 @@
 """
-seed_prices.py — Populate Supabase with realistic vegetable prices
-Usage: py -3.11 seed_prices.py
+seed_prices.py — Fetch REAL data from data.gov.in and save to Supabase
 """
 import asyncio
 import numpy as np
 from datetime import date, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+
+# Load .env explicitly
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
 
 from supabase import create_client
 from config import SUPABASE_URL, SUPABASE_KEY, TRACKED_COMMODITIES
+from services.agmarknet_fetcher import fetch_agmarknet_prices, API_KEY
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Real Indian vegetable wholesale prices ₹/kg (Agmarknet March 2026 averages)
-# Source: Koyambedu APMC, Chennai wholesale market
-PRICES_PER_KG = {
-    "Tomato":       40,   # High demand, ₹35-50
-    "Onion":        28,   # ₹22-35
-    "Potato":       22,   # Stable, ₹18-28
-    "Brinjal":      35,   # ₹28-45
-    "Cabbage":      20,   # ₹15-25
-    "Cauliflower":  42,   # ₹35-55
-    "Carrot":       38,   # ₹30-48
-    "Beans":        65,   # Premium, ₹55-80
-    "Capsicum":     60,   # ₹50-75
-    "Lady Finger":  45,   # ₹38-55
-    "Bitter Gourd": 50,   # ₹40-62
-    "Bottle Gourd": 18,   # Cheap, ₹14-24
-    "Drumstick":    55,   # ₹45-68
-    "Pumpkin":      25,   # ₹20-32
-    "Spinach":      30,   # ₹22-40
-}
-
-# Tamil Nadu mandis with realistic price variations
-# Each mandi has different price levels based on location
-TAMIL_NADU_MANDIS = [
-    {"name": "Koyambedu",         "state": "Tamil Nadu", "district": "Chennai",         "price_factor": 1.10},
-    {"name": "Madurai Market",    "state": "Tamil Nadu", "district": "Madurai",          "price_factor": 0.95},
-    {"name": "Coimbatore Market", "state": "Tamil Nadu", "district": "Coimbatore",       "price_factor": 1.05},
-    {"name": "Salem Market",      "state": "Tamil Nadu", "district": "Salem",            "price_factor": 0.90},
-    {"name": "Trichy Market",     "state": "Tamil Nadu", "district": "Tiruchirappalli",  "price_factor": 0.92},
-]
+print(f"🔑 Using API Key: {API_KEY[:30]}...")
+print(f"📅 Fetching data from: data.gov.in Agmarknet\n")
 
 async def seed():
-    print("🌾 Re-seeding with real ₹/kg prices (March 2026)...")
+    print("🌾 Fetching REAL government data + seeding Supabase...\n")
 
-    # Clear old wrong data
-    supabase.table("price_data").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+    # Clear old data
+    supabase.table("price_data").delete().neq(
+        "id", "00000000-0000-0000-0000-000000000000"
+    ).execute()
     print("✅ Cleared old price data\n")
 
     today = date.today()
-    total = 0
+    from_date = today - timedelta(days=90)
+    total_real = 0
+    total_simulated = 0
 
     for commodity in TRACKED_COMMODITIES:
+        # Get commodity ID
         res = supabase.table("commodities").select("id").eq("name", commodity).execute()
         if not res.data:
-            print(f"  ⚠️  {commodity} not in DB")
+            print(f"  ⚠️  {commodity} not found in DB, skipping")
             continue
-
         commodity_id = res.data[0]["id"]
-        base_price = PRICES_PER_KG.get(commodity, 30)
+
+        # ── Try REAL API fetch ──────────────────────────────
+        print(f"  🌐 Fetching {commodity} from data.gov.in...")
+        try:
+            df = await fetch_agmarknet_prices(
+                commodity=commodity,
+                state="Tamil Nadu",
+                from_date=from_date,
+                to_date=today,
+                limit=500,
+            )
+
+            is_real = (
+                not df.empty
+                and "source" not in df.columns  # simulated adds source col
+                and df["modal_price"].mean() > 100  # real data is in ₹/quintal > 100
+            )
+
+            if is_real and len(df) > 5:
+                # ── REAL DATA ──────────────────────────────
+                rows = []
+                for _, row in df.iterrows():
+                    modal = float(row.get("modal_price", 0))
+                    if modal <= 0:
+                        continue
+                    price_per_kg = round(modal / 100, 2)  # quintal → kg
+                    if not (1 < price_per_kg < 500):
+                        continue
+                    rows.append({
+                        "commodity_id":   commodity_id,
+                        "price":          price_per_kg,
+                        "min_price":      round(float(row.get("min_price", modal * 0.9)) / 100, 2),
+                        "max_price":      round(float(row.get("max_price", modal * 1.1)) / 100, 2),
+                        "mandi_name":     str(row.get("mandi", "Koyambedu")),
+                        "mandi_location": str(row.get("district", "Chennai")),
+                        "state":          str(row.get("state", "Tamil Nadu")),
+                        "recorded_at":    row["date"].date().isoformat()
+                                          if hasattr(row["date"], "date")
+                                          else str(row["date"])[:10],
+                        "source":         "agmarknet_gov_in",
+                    })
+
+                if rows:
+                    for i in range(0, len(rows), 200):
+                        supabase.table("price_data").upsert(
+                            rows[i:i+200],
+                            on_conflict="commodity_id,mandi_name,recorded_at"
+                        ).execute()
+                    total_real += len(rows)
+                    avg_price = round(sum(r["price"] for r in rows) / len(rows), 2)
+                    print(f"  ✅ {commodity}: {len(rows)} REAL records | Avg ₹{avg_price}/kg ← LIVE DATA")
+                    continue  # skip simulated for this commodity
+
+        except Exception as e:
+            print(f"  ⚠️  API error for {commodity}: {e}")
+
+        # ── FALLBACK: Simulated data ───────────────────────
+        BASE_PRICES = {
+            "Tomato":40,"Onion":28,"Potato":22,"Brinjal":35,
+            "Cabbage":20,"Cauliflower":42,"Carrot":38,"Beans":65,
+            "Capsicum":60,"Lady Finger":45,"Bitter Gourd":50,
+            "Bottle Gourd":18,"Drumstick":55,"Pumpkin":25,"Spinach":30,
+        }
+        MANDIS = [
+            {"name":"Koyambedu",         "district":"Chennai",        "factor":1.10},
+            {"name":"Madurai Market",    "district":"Madurai",         "factor":0.95},
+            {"name":"Coimbatore Market", "district":"Coimbatore",      "factor":1.05},
+            {"name":"Salem Market",      "district":"Salem",           "factor":0.90},
+            {"name":"Trichy Market",     "district":"Tiruchirappalli", "factor":0.92},
+        ]
+        base = BASE_PRICES.get(commodity, 30)
         np.random.seed(hash(commodity) % 2**31)
         rows = []
-
-        for mandi in TAMIL_NADU_MANDIS:
-            price = base_price * mandi["price_factor"]
-
-            for day_offset in range(90):  # 90 days of history
+        for mandi in MANDIS:
+            price = base * mandi["factor"]
+            for day_offset in range(90):
                 record_date = today - timedelta(days=90 - day_offset)
-
-                # Seasonal variation
                 month = record_date.month
-                if month in [4, 5, 6]:      # Summer — prices rise
-                    seasonal = 1.20
-                elif month in [11, 12, 1]:  # Winter — prices drop
-                    seasonal = 0.85
-                else:
-                    seasonal = 1.0
-
-                # Daily random walk ±4%
-                price = price * (1 + float(np.random.uniform(-0.04, 0.04))) * seasonal
-                price = max(price, base_price * 0.6)
-                price = min(price, base_price * 1.8)
-
+                seasonal = 1.20 if month in [4,5,6] else (0.85 if month in [11,12,1] else 1.0)
+                price = max(price*(1+float(np.random.uniform(-0.04,0.04)))*seasonal, base*0.6)
+                price = min(price, base*1.8)
                 rows.append({
                     "commodity_id":   commodity_id,
                     "price":          round(price, 2),
-                    "min_price":      round(price * 0.87, 2),
-                    "max_price":      round(price * 1.13, 2),
+                    "min_price":      round(price*0.87, 2),
+                    "max_price":      round(price*1.13, 2),
                     "mandi_name":     mandi["name"],
                     "mandi_location": mandi["district"],
-                    "state":          mandi["state"],
+                    "state":          "Tamil Nadu",
                     "recorded_at":    record_date.isoformat(),
                     "source":         "simulated",
                 })
 
-        # Upsert in batches
         for i in range(0, len(rows), 200):
             supabase.table("price_data").upsert(
-                rows[i:i+200], on_conflict="commodity_id,mandi_name,recorded_at"
+                rows[i:i+200],
+                on_conflict="commodity_id,mandi_name,recorded_at"
             ).execute()
+        total_simulated += len(rows)
+        print(f"  📊 {commodity}: {len(rows)} simulated records | Base ₹{base}/kg (API unavailable)")
 
-        total += len(rows)
-        avg = round(base_price, 2)
-        print(f"  ✅ {commodity}: {len(rows)} records | Base ₹{avg}/kg | {len(TAMIL_NADU_MANDIS)} mandis")
+        await asyncio.sleep(1)  # avoid rate limiting
 
-    print(f"\n✅ Done! {total} total records.")
-    print("📊 Price ranges are realistic wholesale rates for Tamil Nadu:")
-    print("   Tomato ₹35-50 | Onion ₹22-35 | Potato ₹18-28 | Beans ₹55-80")
-    print("\n🔄 Refresh http://localhost:8081 now!")
+    print(f"\n{'='*50}")
+    print(f"✅ Done!")
+    print(f"🌐 REAL records:      {total_real}")
+    print(f"📊 Simulated records: {total_simulated}")
+    if total_real > 0:
+        print(f"🎉 Real government data successfully fetched!")
+    else:
+        print(f"⚠️  All simulated — check API key or try again later")
+    print(f"🔄 Refresh http://localhost:8080 now!")
 
 if __name__ == "__main__":
     asyncio.run(seed())
