@@ -113,7 +113,7 @@ export function ChatbotSection() {
                       {isLoading ? (
                         <span className="text-price-up font-medium">Typing...</span>
                       ) : (
-                        "Online • Powered by Gemini"
+                        "Online • Powered by Claude"
                       )}
                     </span>
                   </div>

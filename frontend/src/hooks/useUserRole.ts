@@ -1,33 +1,6 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "./useAuth";
+import { useState } from "react";
 
 export function useUserRole() {
-  const { user } = useAuth();
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    if (!user) {
-      setIsAdmin(false);
-      setIsLoading(false);
-      return;
-    }
-
-    async function checkRole() {
-      const { data, error } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user!.id)
-        .eq("role", "admin")
-        .maybeSingle();
-
-      setIsAdmin(!!data && !error);
-      setIsLoading(false);
-    }
-
-    checkRole();
-  }, [user]);
-
-  return { isAdmin, isLoading };
+  // user_roles table not implemented yet — default to non-admin
+  return { isAdmin: false, isLoading: false };
 }

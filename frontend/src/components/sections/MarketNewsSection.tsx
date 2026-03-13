@@ -102,7 +102,7 @@ export function MarketNewsSection() {
   const { data: news, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["market_news"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("market_news").select("*").order("published_at", { ascending: false }).limit(6);
+      const { data, error } = await supabase.from("market_news").select("*").order("published_at", { ascending: false }).limit(6).then(r => r).catch(() => ({ data: [], error: null }));
       if (error) throw error;
       return data && data.length > 0 ? data : fallbackNews;
     },
