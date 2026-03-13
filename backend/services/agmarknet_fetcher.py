@@ -7,20 +7,26 @@ import logging
 import asyncio
 from datetime import date, timedelta
 from typing import Optional
+from pathlib import Path
 import httpx
 import pandas as pd
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from backend directory explicitly
+_backend_dir = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=_backend_dir / ".env", override=True)
+
 logger = logging.getLogger(__name__)
 
 PUBLIC_BASE = "https://api.data.gov.in/resource"
 AGMARKNET_RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
+REAL_KEY = "579b464db66ec23bdd000001cc6de5d5bdd144fd50c38dc43e10a8ac"
 
-# Read your real API key from .env
-_raw_key = os.getenv("DATA_GOV_API_KEY", "")
-DEMO_KEY  = "579b464db66ec23d318a903939b7"
-API_KEY   = _raw_key if _raw_key and _raw_key != "YOUR_DATA_GOV_IN_API_KEY" else DEMO_KEY
+# Read key — always prefer .env, fallback to hardcoded real key
+_env_key = os.getenv("DATA_GOV_API_KEY", "").strip()
+API_KEY = _env_key if (_env_key and _env_key not in ("", "YOUR_DATA_GOV_IN_API_KEY")) else REAL_KEY
+
+logger.info(f"Using API key: {API_KEY[:25]}...")
 
 try:
     from config import TRACKED_COMMODITIES
@@ -31,7 +37,7 @@ except Exception:
         "Bitter Gourd","Bottle Gourd","Drumstick","Pumpkin","Spinach",
     ]
 
-# Real wholesale base prices ₹/quintal (govt API unit)
+# Real wholesale base prices ₹/quintal
 SAMPLE_BASE_PRICES = {
     "Tomato":4000,"Onion":2800,"Potato":2200,"Brinjal":3500,
     "Cabbage":2000,"Cauliflower":4200,"Carrot":3800,"Beans":6500,
@@ -62,7 +68,7 @@ async def fetch_agmarknet_prices(
     if state:
         params["filters[State]"] = state
 
-    logger.info(f"Fetching {commodity} with key: {API_KEY[:20]}...")
+    logger.info(f"Fetching {commodity} with key: {API_KEY[:25]}...")
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -98,7 +104,6 @@ async def fetch_agmarknet_prices(
 
 def _generate_sample_data(commodity: str, from_date: date, to_date: date) -> pd.DataFrame:
     import numpy as np
-    # Base price per quintal (real wholesale rates)
     base = SAMPLE_BASE_PRICES.get(commodity, 3000)
     dates = pd.date_range(from_date, to_date, freq="D")
     np.random.seed(hash(commodity) % 2**31)
