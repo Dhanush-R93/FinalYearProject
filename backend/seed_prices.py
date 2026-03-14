@@ -105,7 +105,7 @@ async def seed():
     # Fetch last 30 days
     print("📡 Fetching last 30 days from data.gov.in...\n")
     all_tn_records = []
-    for i in range(30):
+    for i in range(90):
         d = today - timedelta(days=i)
         records = await fetch_tn_records(d)
         if records:
