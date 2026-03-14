@@ -1,10 +1,10 @@
 """
-seed_prices.py — Fetch ALL real Tamil Nadu data and save to Supabase
+seed_prices.py — Fetch REAL data from data.gov.in and save to Supabase
 """
 import asyncio
 import numpy as np
 import httpx
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -18,7 +18,6 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 API_KEY = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
 URL     = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
 
-# Match API commodity names to our DB names
 COMMODITY_MAP = {
     "Tomato":       ["Tomato"],
     "Onion":        ["Onion"],
@@ -45,7 +44,6 @@ BASE_PRICES_KG = {
 }
 
 async def fetch_tn_records(target_date: date) -> list:
-    """Fetch all Tamil Nadu records for a date"""
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.get(URL, params={
@@ -62,94 +60,131 @@ async def fetch_tn_records(target_date: date) -> list:
         print(f"  ⚠️  Fetch failed for {target_date}: {e}")
         return []
 
+def save_batch(rows: list) -> int:
+    """Save rows one batch at a time, return count saved"""
+    saved = 0
+    for i in range(0, len(rows), 100):
+        batch = rows[i:i+100]
+        try:
+            # Use insert with ignore duplicates
+            result = supabase.table("price_data").insert(
+                batch, returning="minimal"
+            ).execute()
+            saved += len(batch)
+        except Exception as e:
+            err_str = str(e)
+            if "duplicate" in err_str.lower() or "unique" in err_str.lower():
+                # Try one by one
+                for row in batch:
+                    try:
+                        supabase.table("price_data").insert(row, returning="minimal").execute()
+                        saved += 1
+                    except:
+                        pass
+            else:
+                print(f"    ❌ Save error: {err_str[:100]}")
+    return saved
+
 async def seed():
     print(f"🔑 API Key: {API_KEY[:25]}...")
-    print("🌾 Fetching ALL Tamil Nadu real data\n")
+    print("🌾 Fetching REAL Tamil Nadu data from Agmarknet\n")
 
-    # Clear old data
-    supabase.table("price_data").delete().neq(
-        "id","00000000-0000-0000-0000-000000000000"
-    ).execute()
-    print("✅ Cleared old data\n")
+    # Clear ALL old data first
+    try:
+        supabase.table("price_data").delete().neq(
+            "id","00000000-0000-0000-0000-000000000000"
+        ).execute()
+        print("✅ Cleared old data\n")
+    except Exception as e:
+        print(f"❌ Clear failed: {e}")
+        return
 
     today = date.today()
 
-    # ── Step 1: Fetch last 30 days of real TN data ──────────
+    # ── Fetch last 30 days ──────────────────────────────────
     print("📡 Fetching last 30 days from data.gov.in...\n")
-    all_tn_records = []  # flat list of all records
-
+    all_tn_records = []
     for i in range(30):
         d = today - timedelta(days=i)
         records = await fetch_tn_records(d)
-        all_tn_records.extend(records)
         if records:
+            # Add arrival_date to each record for later use
+            for rec in records:
+                rec["_fetched_date"] = d
+            all_tn_records.extend(records)
             print(f"  ✅ {d}: {len(records)} TN records")
         else:
             print(f"  ⚠️  {d}: no data")
-        await asyncio.sleep(1.5)  # respect rate limit
+        await asyncio.sleep(1.5)
 
-    print(f"\n📊 Total real records fetched: {len(all_tn_records)}\n")
+    print(f"\n📊 Total real TN records: {len(all_tn_records)}\n")
+    print("💾 Saving to Supabase...\n")
 
-    # ── Step 2: Save real data per commodity ────────────────
+    # ── Get all commodity IDs at once ──────────────────────
+    comm_res = supabase.table("commodities").select("id,name").execute()
+    commodity_ids = {c["name"]: c["id"] for c in comm_res.data}
+
     total_real = 0
     total_sim  = 0
 
     for commodity in TRACKED_COMMODITIES:
-        res = supabase.table("commodities").select("id").eq("name", commodity).execute()
-        if not res.data:
+        commodity_id = commodity_ids.get(commodity)
+        if not commodity_id:
+            print(f"  ⚠️  {commodity} not in DB")
             continue
-        commodity_id = res.data[0]["id"]
+
         aliases = COMMODITY_MAP.get(commodity, [commodity])
-        rows = []
+        real_rows = []
 
-        # Match real records for this commodity
-        matched = [
-            rec for rec in all_tn_records
-            if any(
-                alias.lower() == str(rec.get("commodity","")).lower()
-                for alias in aliases
-            )
-        ]
+        # Match real records
+        for rec in all_tn_records:
+            rec_commodity = str(rec.get("commodity",""))
+            if not any(alias.lower() == rec_commodity.lower() for alias in aliases):
+                continue
 
-        for rec in matched:
-            modal = float(rec.get("modal_price", 0))
+            modal = float(rec.get("modal_price", 0) or 0)
             if modal <= 0:
                 continue
             price_kg = round(modal / 100, 2)
             if not (1 < price_kg < 500):
                 continue
 
-            # Parse date
             try:
-                from datetime import datetime
-                rec_date = datetime.strptime(rec["arrival_date"], "%d/%m/%Y").date()
+                rec_date = datetime.strptime(
+                    rec.get("arrival_date", ""), "%d/%m/%Y"
+                ).date()
             except:
-                rec_date = today
+                rec_date = rec.get("_fetched_date", today)
 
-            rows.append({
+            real_rows.append({
                 "commodity_id":   commodity_id,
                 "price":          price_kg,
-                "min_price":      round(float(rec.get("min_price", modal*0.9)) / 100, 2),
-                "max_price":      round(float(rec.get("max_price", modal*1.1)) / 100, 2),
-                "mandi_name":     str(rec.get("market", "Unknown")),
-                "mandi_location": str(rec.get("district", "")),
+                "min_price":      round(float(rec.get("min_price") or modal*0.9) / 100, 2),
+                "max_price":      round(float(rec.get("max_price") or modal*1.1) / 100, 2),
+                "mandi_name":     str(rec.get("market", "Unknown"))[:100],
+                "mandi_location": str(rec.get("district", ""))[:100],
                 "state":          "Tamil Nadu",
                 "recorded_at":    rec_date.isoformat(),
                 "source":         "agmarknet_gov_in",
             })
 
-        real_count = len(rows)
-        total_real += real_count
+        # Save real rows
+        real_saved = save_batch(real_rows) if real_rows else 0
+        total_real += real_saved
 
-        # Fill 90 days simulated history for chart continuity
+        # ── Simulated history (60 days before real data) ────
         base = BASE_PRICES_KG.get(commodity, 30)
         np.random.seed(hash(commodity) % 2**31)
         sim_rows = []
+        price = float(base)
         for day_offset in range(90):
             record_date = today - timedelta(days=90 - day_offset)
             if record_date >= today - timedelta(days=30):
-                continue  # real data covers recent days
-            price = base * (1 + float(np.random.uniform(-0.04, 0.04)))
+                continue
+            month = record_date.month
+            seasonal = 1.20 if month in [4,5,6] else (0.85 if month in [11,12,1] else 1.0)
+            price = max(price*(1+float(np.random.uniform(-0.04,0.04)))*seasonal, base*0.6)
+            price = min(price, base*1.8)
             sim_rows.append({
                 "commodity_id":   commodity_id,
                 "price":          round(price, 2),
@@ -162,24 +197,19 @@ async def seed():
                 "source":         "simulated",
             })
 
-        all_rows = rows + sim_rows
-        total_sim += len(sim_rows)
+        sim_saved = save_batch(sim_rows)
+        total_sim += sim_saved
 
-        # Upsert
-        for i in range(0, len(all_rows), 200):
-            supabase.table("price_data").upsert(
-                all_rows[i:i+200],
-                on_conflict="commodity_id,mandi_name,recorded_at"
-            ).execute()
-
-        status = "🌐 LIVE" if real_count > 0 else "📊 sim "
-        print(f"  {status} | {commodity:15} | {real_count:3} real records | {len(sim_rows)} simulated")
+        status = "🌐 LIVE" if real_saved > 0 else "📊 sim "
+        print(f"  {status} | {commodity:15} | {real_saved:3} real | {sim_saved} simulated saved")
 
     print(f"\n{'='*55}")
-    print(f"🌐 Real govt records : {total_real}")
-    print(f"📊 Simulated records : {total_sim}")
+    print(f"🌐 Real govt records saved : {total_real}")
+    print(f"📊 Simulated records saved : {total_sim}")
     if total_real > 0:
-        print(f"🎉 Real data from Agmarknet saved successfully!")
+        print(f"🎉 SUCCESS! Real Agmarknet data in your database!")
+    else:
+        print(f"⚠️  No real data saved — all simulated")
     print(f"\n🔄 Refresh http://localhost:8080!")
 
 if __name__ == "__main__":
