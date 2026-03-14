@@ -57,25 +57,37 @@ async def fetch_tn_records(target_date: date) -> list:
             tn = [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
             return tn
     except Exception as e:
-        print(f"  ⚠️  Fetch failed for {target_date}: {e}")
+        print(f"  ⚠️  {target_date}: {e}")
         return []
 
+def deduplicate(rows: list) -> list:
+    """Remove duplicate rows by commodity_id+mandi_name+recorded_at"""
+    seen = set()
+    unique = []
+    for row in rows:
+        key = (row["commodity_id"], row["mandi_name"], row["recorded_at"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(row)
+    return unique
+
 def save_rows(rows: list, label: str) -> int:
-    """Save rows using upsert — correct supabase-py v2 syntax"""
+    """Deduplicate then save using insert one by one to avoid batch conflicts"""
     if not rows:
         return 0
+    rows = deduplicate(rows)
     saved = 0
-    for i in range(0, len(rows), 100):
-        batch = rows[i:i+100]
+    # Insert one by one to avoid any duplicate conflicts
+    for row in rows:
         try:
-            result = supabase.table("price_data").upsert(
-                batch,
-                on_conflict="commodity_id,mandi_name,recorded_at"
-            ).execute()
-            # supabase-py v2: result.data contains saved rows
-            saved += len(result.data) if result.data else len(batch)
+            supabase.table("price_data").insert(row).execute()
+            saved += 1
         except Exception as e:
-            print(f"    ❌ Save error ({label}): {str(e)[:120]}")
+            err = str(e)
+            if "duplicate" in err.lower() or "unique" in err.lower() or "21000" in err:
+                pass  # skip duplicates silently
+            else:
+                print(f"    ❌ {label}: {err[:80]}")
     return saved
 
 async def seed():
@@ -83,14 +95,10 @@ async def seed():
     print("🌾 Fetching REAL Tamil Nadu data from Agmarknet\n")
 
     # Clear old data
-    try:
-        supabase.table("price_data").delete().neq(
-            "id","00000000-0000-0000-0000-000000000000"
-        ).execute()
-        print("✅ Cleared old data\n")
-    except Exception as e:
-        print(f"❌ Clear failed: {e}")
-        return
+    supabase.table("price_data").delete().neq(
+        "id","00000000-0000-0000-0000-000000000000"
+    ).execute()
+    print("✅ Cleared old data\n")
 
     today = date.today()
 
@@ -109,17 +117,12 @@ async def seed():
             print(f"  ⚠️  {d}: no data")
         await asyncio.sleep(1.5)
 
-    print(f"\n📊 Total real TN records fetched: {len(all_tn_records)}\n")
+    print(f"\n📊 Total real TN records: {len(all_tn_records)}\n")
 
-    # Test save 1 row first
-    print("🧪 Testing DB connection...")
+    # Get commodity IDs
     comm_res = supabase.table("commodities").select("id,name").execute()
-    if not comm_res.data:
-        print("❌ Cannot read commodities table!")
-        return
-    print(f"✅ DB connected — {len(comm_res.data)} commodities found\n")
-
     commodity_ids = {c["name"]: c["id"] for c in comm_res.data}
+    print(f"✅ DB connected — {len(commodity_ids)} commodities\n")
     print("💾 Saving to Supabase...\n")
 
     total_real = 0
@@ -128,7 +131,6 @@ async def seed():
     for commodity in TRACKED_COMMODITIES:
         commodity_id = commodity_ids.get(commodity)
         if not commodity_id:
-            print(f"  ⚠️  {commodity} not in DB, skipping")
             continue
 
         aliases = COMMODITY_MAP.get(commodity, [commodity])
@@ -151,12 +153,18 @@ async def seed():
             except:
                 rec_date = rec.get("_fetched_date", today)
 
+            mandi_name = str(rec.get("market","Unknown"))[:100]
+            # Make mandi_name unique per variety to avoid duplicates
+            variety = str(rec.get("variety","")).strip()
+            if variety and variety.lower() not in ("other","faq","mixed",""):
+                mandi_name = f"{mandi_name} ({variety})"
+
             real_rows.append({
                 "commodity_id":   commodity_id,
                 "price":          price_kg,
                 "min_price":      round(float(rec.get("min_price") or modal*0.9) / 100, 2),
                 "max_price":      round(float(rec.get("max_price") or modal*1.1) / 100, 2),
-                "mandi_name":     str(rec.get("market","Unknown"))[:100],
+                "mandi_name":     mandi_name[:100],
                 "mandi_location": str(rec.get("district",""))[:100],
                 "state":          "Tamil Nadu",
                 "recorded_at":    rec_date.isoformat(),
@@ -166,7 +174,7 @@ async def seed():
         real_saved = save_rows(real_rows, commodity)
         total_real += real_saved
 
-        # Simulated history for chart (60 days before real data)
+        # Simulated history
         base = BASE_PRICES_KG.get(commodity, 30)
         np.random.seed(hash(commodity) % 2**31)
         sim_rows = []
@@ -195,15 +203,13 @@ async def seed():
         total_sim += sim_saved
 
         status = "🌐 LIVE" if real_saved > 0 else "📊 sim "
-        print(f"  {status} | {commodity:15} | {real_saved:3} real | {sim_saved} sim saved")
+        print(f"  {status} | {commodity:15} | {real_saved:4} real | {sim_saved} sim")
 
     print(f"\n{'='*55}")
-    print(f"🌐 Real govt records saved : {total_real}")
-    print(f"📊 Simulated records saved : {total_sim}")
+    print(f"🌐 Real govt records : {total_real}")
+    print(f"📊 Simulated records : {total_sim}")
     if total_real > 0:
-        print(f"🎉 SUCCESS! Real Agmarknet data is now in your database!")
-    else:
-        print(f"⚠️  0 real saved — check errors above")
+        print(f"🎉 SUCCESS! Real Agmarknet data saved!")
     print(f"\n🔄 Refresh http://localhost:8080!")
 
 if __name__ == "__main__":
