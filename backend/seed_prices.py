@@ -45,21 +45,49 @@ BASE_PRICES_KG = {
     "Bottle Gourd":18,"Drumstick":55,"Pumpkin":25,"Spinach":30,
 }
 
-async def fetch_tn_records(target_date: date) -> list:
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.get(URL, params={
-                "api-key": API_KEY,
-                "format":  "json",
-                "limit":   1000,
-                "filters[arrival_date]": target_date.strftime("%d/%m/%Y"),
-            })
-            r.raise_for_status()
-            all_records = r.json().get("records", [])
-            return [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
-    except Exception as e:
-        print(f"  ⚠️  {target_date}: {e}")
-        return []
+async def fetch_tn_records(target_date: date, max_retry: int = 3) -> list:
+    """Fetch with automatic retry on failure"""
+    for attempt in range(1, max_retry + 1):
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                r = await client.get(URL, params={
+                    "api-key": API_KEY,
+                    "format":  "json",
+                    "limit":   1000,
+                    "filters[arrival_date]": target_date.strftime("%d/%m/%Y"),
+                })
+                r.raise_for_status()
+                all_records = r.json().get("records", [])
+                tn = [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
+                return tn
+
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            if code == 502:
+                print(f"  🔴 {target_date}: 502 Bad Gateway (attempt {attempt}/{max_retry})")
+            elif code == 429:
+                print(f"  🚦 {target_date}: Rate limited — waiting 15s...")
+                await asyncio.sleep(15)
+            elif code == 403:
+                print(f"  🔑 {target_date}: 403 Forbidden — API key issue")
+                return []  # no point retrying
+            else:
+                print(f"  ❌ {target_date}: HTTP {code}")
+
+        except httpx.TimeoutException:
+            print(f"  ⏱️  {target_date}: Timeout (attempt {attempt}/{max_retry})")
+
+        except Exception as e:
+            print(f"  ❌ {target_date}: {str(e)[:80]}")
+
+        # Wait before retry (longer each time)
+        if attempt < max_retry:
+            wait = attempt * 5  # 5s, 10s, 15s
+            print(f"     ⏳ Waiting {wait}s before retry...")
+            await asyncio.sleep(wait)
+
+    print(f"  💀 {target_date}: All {max_retry} attempts failed — skipping")
+    return []
 
 def get_dates_in_db() -> set:
     """Get all dates already stored in DB"""

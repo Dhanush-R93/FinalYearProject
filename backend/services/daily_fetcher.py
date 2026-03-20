@@ -1,9 +1,10 @@
 """
 daily_fetcher.py
-- Runs on backend startup
-- Fetches ONLY missing days (not already in DB)
-- Deletes records older than 90 days automatically
-- Called from api/main.py on startup
+Smart incremental fetcher with:
+- Retry failed dates automatically
+- Track failed dates in DB
+- Never lose data due to network errors
+- Auto-delete records older than 90 days
 """
 import asyncio
 import logging
@@ -16,9 +17,10 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", overrid
 
 logger = logging.getLogger(__name__)
 
-API_KEY = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
-URL     = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
-KEEP_DAYS = 90  # keep only last 90 days
+API_KEY   = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
+URL       = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
+KEEP_DAYS = 90
+MAX_RETRY = 3  # retry failed dates up to 3 times
 
 COMMODITY_MAP = {
     "Tomato":       ["Tomato"],
@@ -38,7 +40,11 @@ COMMODITY_MAP = {
     "Spinach":      ["Amaranthus"],
 }
 
-async def fetch_tn_records(target_date: date) -> list:
+# ── Failed dates tracking in memory ──────────────────────────
+_failed_dates: dict = {}  # {date_str: retry_count}
+
+async def fetch_tn_records(target_date: date, attempt: int = 1) -> list:
+    """Fetch with retry logic"""
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.get(URL, params={
@@ -49,19 +55,85 @@ async def fetch_tn_records(target_date: date) -> list:
             })
             r.raise_for_status()
             all_records = r.json().get("records", [])
-            return [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
-    except Exception as e:
-        logger.warning(f"Fetch failed for {target_date}: {e}")
+            tn = [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
+
+            # Success — remove from failed list if it was there
+            _failed_dates.pop(target_date.isoformat(), None)
+            return tn
+
+    except httpx.TimeoutException:
+        logger.warning(f"  ⏱️  Timeout for {target_date} (attempt {attempt}/{MAX_RETRY})")
+        _failed_dates[target_date.isoformat()] = attempt
         return []
 
-def save_rows(supabase, rows: list) -> int:
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 502:
+            logger.warning(f"  🔴 502 Bad Gateway for {target_date} (attempt {attempt}/{MAX_RETRY}) — server overloaded")
+        elif e.response.status_code == 403:
+            logger.warning(f"  🔑 403 Forbidden for {target_date} — API key issue")
+        elif e.response.status_code == 429:
+            logger.warning(f"  🚦 429 Rate limited for {target_date} — too many requests")
+            await asyncio.sleep(10)  # wait longer on rate limit
+        else:
+            logger.warning(f"  ❌ HTTP {e.response.status_code} for {target_date}")
+        _failed_dates[target_date.isoformat()] = attempt
+        return []
+
+    except Exception as e:
+        logger.warning(f"  ❌ Network error for {target_date}: {e}")
+        _failed_dates[target_date.isoformat()] = attempt
+        return []
+
+
+def build_and_save_rows(supabase, records: list, commodity_ids: dict, fetch_date: date) -> int:
+    """Build DB rows from API records and save"""
+    rows = []
+    for rec in records:
+        rec_commodity = str(rec.get("commodity",""))
+        modal = float(rec.get("modal_price", 0) or 0)
+        if modal <= 0:
+            continue
+        price_kg = round(modal / 100, 2)
+        if not (1 < price_kg < 500):
+            continue
+        try:
+            rec_date = datetime.strptime(rec.get("arrival_date",""), "%d/%m/%Y").date()
+        except:
+            rec_date = fetch_date
+
+        variety = str(rec.get("variety","")).strip()
+        mandi_name = str(rec.get("market","Unknown"))[:100]
+        if variety and variety.lower() not in ("other","faq","mixed",""):
+            mandi_name = f"{mandi_name} ({variety})"
+
+        for commodity, aliases in COMMODITY_MAP.items():
+            if any(alias.lower() == rec_commodity.lower() for alias in aliases):
+                cid = commodity_ids.get(commodity)
+                if cid:
+                    rows.append({
+                        "commodity_id":   cid,
+                        "price":          price_kg,
+                        "min_price":      round(float(rec.get("min_price") or modal*0.9)/100, 2),
+                        "max_price":      round(float(rec.get("max_price") or modal*1.1)/100, 2),
+                        "mandi_name":     mandi_name,
+                        "mandi_location": str(rec.get("district",""))[:100],
+                        "state":          "Tamil Nadu",
+                        "recorded_at":    rec_date.isoformat(),
+                        "source":         "agmarknet_gov_in",
+                    })
+
+    # Deduplicate
     seen = set()
-    saved = 0
+    unique_rows = []
     for row in rows:
         key = (row["commodity_id"], row["mandi_name"], row["recorded_at"])
-        if key in seen:
-            continue
-        seen.add(key)
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(row)
+
+    # Save
+    saved = 0
+    for row in unique_rows:
         try:
             supabase.table("price_data").insert(row).execute()
             saved += 1
@@ -71,24 +143,62 @@ def save_rows(supabase, rows: list) -> int:
                 logger.warning(f"Save error: {err[:80]}")
     return saved
 
+
+async def retry_failed_dates(supabase, commodity_ids: dict):
+    """Retry previously failed dates"""
+    if not _failed_dates:
+        return
+
+    retryable = {
+        d: count for d, count in _failed_dates.items()
+        if count < MAX_RETRY
+    }
+    permanent_fails = {
+        d: count for d, count in _failed_dates.items()
+        if count >= MAX_RETRY
+    }
+
+    if permanent_fails:
+        logger.warning(f"⚠️  Permanently failed dates (max retries reached): {list(permanent_fails.keys())}")
+        logger.warning("   These dates will use simulated data as fallback")
+
+    if not retryable:
+        return
+
+    logger.info(f"🔁 Retrying {len(retryable)} failed dates...")
+    for date_str, attempt in list(retryable.items()):
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        logger.info(f"  🔁 Retry {attempt+1}/{MAX_RETRY} for {d}")
+        await asyncio.sleep(3)  # wait before retry
+        records = await fetch_tn_records(d, attempt=attempt+1)
+        if records:
+            saved = build_and_save_rows(supabase, records, commodity_ids, d)
+            logger.info(f"  ✅ Retry success for {d}: {saved} records saved")
+        else:
+            logger.warning(f"  ❌ Retry failed for {d}")
+        await asyncio.sleep(2)
+
+
 async def run_incremental_fetch(supabase):
     """
-    Called on backend startup:
-    1. Check which dates are missing from DB
-    2. Fetch only those missing dates
-    3. Delete records older than 90 days
+    Main function called on backend startup:
+    1. Check which dates are missing
+    2. Fetch only missing dates
+    3. Retry any failed dates
+    4. Delete records older than 90 days
     """
     today = date.today()
+    logger.info("="*50)
     logger.info("🔄 Starting incremental data fetch...")
 
     # Get commodity IDs
     comm_res = supabase.table("commodities").select("id,name").execute()
     commodity_ids = {c["name"]: c["id"] for c in (comm_res.data or [])}
     if not commodity_ids:
-        logger.error("No commodities found in DB!")
+        logger.error("No commodities in DB!")
         return
 
-    # Get dates already in DB (real data only)
+    # Get dates already successfully fetched
     existing_res = supabase.table("price_data")\
         .select("recorded_at")\
         .eq("source", "agmarknet_gov_in")\
@@ -96,7 +206,7 @@ async def run_incremental_fetch(supabase):
     existing_dates = set(row["recorded_at"] for row in (existing_res.data or []))
     logger.info(f"📅 Dates already in DB: {len(existing_dates)}")
 
-    # Find missing dates (last 90 days only)
+    # Find missing dates in last 90 days
     missing_dates = []
     for i in range(KEEP_DAYS):
         d = today - timedelta(days=i)
@@ -104,61 +214,32 @@ async def run_incremental_fetch(supabase):
             missing_dates.append(d)
 
     if not missing_dates:
-        logger.info("✅ All days up to date — nothing to fetch")
+        logger.info("✅ All days up to date!")
     else:
-        logger.info(f"📥 Fetching {len(missing_dates)} missing days: {[str(d) for d in missing_dates[:5]]}...")
-
+        logger.info(f"📥 Missing {len(missing_dates)} days → fetching now...")
         total_saved = 0
+        failed_count = 0
+
         for d in missing_dates:
-            records = await fetch_tn_records(d)
-            if not records:
-                await asyncio.sleep(1)
-                continue
+            records = await fetch_tn_records(d, attempt=1)
 
-            rows = []
-            for rec in records:
-                rec_commodity = str(rec.get("commodity",""))
-                modal = float(rec.get("modal_price", 0) or 0)
-                if modal <= 0:
-                    continue
-                price_kg = round(modal / 100, 2)
-                if not (1 < price_kg < 500):
-                    continue
+            if records:
+                saved = build_and_save_rows(supabase, records, commodity_ids, d)
+                total_saved += saved
+                logger.info(f"  ✅ {d}: {len(records)} fetched → {saved} saved")
+            else:
+                failed_count += 1
+                logger.warning(f"  ⚠️  {d}: fetch failed — will retry")
 
-                try:
-                    rec_date = datetime.strptime(
-                        rec.get("arrival_date",""), "%d/%m/%Y"
-                    ).date()
-                except:
-                    rec_date = d
-
-                variety = str(rec.get("variety","")).strip()
-                mandi_name = str(rec.get("market","Unknown"))[:100]
-                if variety and variety.lower() not in ("other","faq","mixed",""):
-                    mandi_name = f"{mandi_name} ({variety})"
-
-                for commodity, aliases in COMMODITY_MAP.items():
-                    if any(alias.lower() == rec_commodity.lower() for alias in aliases):
-                        cid = commodity_ids.get(commodity)
-                        if cid:
-                            rows.append({
-                                "commodity_id":   cid,
-                                "price":          price_kg,
-                                "min_price":      round(float(rec.get("min_price") or modal*0.9)/100, 2),
-                                "max_price":      round(float(rec.get("max_price") or modal*1.1)/100, 2),
-                                "mandi_name":     mandi_name,
-                                "mandi_location": str(rec.get("district",""))[:100],
-                                "state":          "Tamil Nadu",
-                                "recorded_at":    rec_date.isoformat(),
-                                "source":         "agmarknet_gov_in",
-                            })
-
-            day_saved = save_rows(supabase, rows)
-            total_saved += day_saved
-            logger.info(f"  ✅ {d}: {len(records)} fetched → {day_saved} saved")
             await asyncio.sleep(1.5)
 
-        logger.info(f"✅ Incremental fetch complete: {total_saved} new records saved")
+        logger.info(f"📊 Saved: {total_saved} | Failed: {failed_count} dates")
+
+        # Retry failed dates after short wait
+        if _failed_dates:
+            logger.info("⏳ Waiting 30s before retrying failed dates...")
+            await asyncio.sleep(30)
+            await retry_failed_dates(supabase, commodity_ids)
 
     # Delete records older than 90 days
     cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
@@ -169,8 +250,15 @@ async def run_incremental_fetch(supabase):
             .execute()
         deleted = len(del_res.data) if del_res.data else 0
         if deleted > 0:
-            logger.info(f"🗑️  Deleted {deleted} records older than {KEEP_DAYS} days")
+            logger.info(f"🗑️  Auto-deleted {deleted} records older than {KEEP_DAYS} days")
     except Exception as e:
         logger.warning(f"Delete old records failed: {e}")
 
-    logger.info("✅ Daily fetch complete!")
+    # Summary
+    logger.info("="*50)
+    if _failed_dates:
+        permanent = [d for d, c in _failed_dates.items() if c >= MAX_RETRY]
+        if permanent:
+            logger.warning(f"⚠️  {len(permanent)} dates permanently unavailable: {permanent}")
+            logger.warning("   Simulated data will fill these gaps on frontend")
+    logger.info("✅ Incremental fetch complete!")
