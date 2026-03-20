@@ -43,10 +43,13 @@ COMMODITY_MAP = {
 # ── Step 1: Check DB ────────────────────────────────────────
 def get_db_record_count(target_date: str) -> int:
     """Check how many real records exist for this date"""
+    from datetime import datetime as dt
+    next_d = (dt.strptime(target_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     res = supabase.table("price_data")\
         .select("id", count="exact")\
         .eq("source", "agmarknet_gov_in")\
-        .eq("recorded_at", target_date)\
+        .gte("recorded_at", target_date)\
+        .lt("recorded_at", next_d)\
         .execute()
     return res.count or 0
 
