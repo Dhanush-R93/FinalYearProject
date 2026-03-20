@@ -1,12 +1,15 @@
 """
-seed_prices.py — Fetch last 30 days, ALL commodities, ALL Tamil Nadu markets
+seed_prices.py - Smart incremental fetcher:
+1. Check DB for each date before fetching
+2. Save instantly after each successful fetch
+3. Fill gaps using interpolation if fetch fails
 """
 import asyncio
+import httpx
 import numpy as np
 from datetime import date, timedelta, datetime
 from pathlib import Path
 from dotenv import load_dotenv
-
 load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
 
 from supabase import create_client
@@ -14,10 +17,10 @@ from config import SUPABASE_URL, SUPABASE_KEY, TRACKED_COMMODITIES
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-API_KEY  = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
-URL      = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
+API_KEY   = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
+URL       = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
 KEEP_DAYS = 30
-CONCURRENT = 5
+EXPECTED_RECORDS_PER_DAY = 200  # if DB has >= this, skip that date
 
 COMMODITY_MAP = {
     "Tomato":       ["Tomato"],
@@ -27,7 +30,7 @@ COMMODITY_MAP = {
     "Cabbage":      ["Cabbage"],
     "Cauliflower":  ["Cauliflower"],
     "Carrot":       ["Carrot"],
-    "Beans":        ["Beans", "Cluster beans", "Indian Beans(Seam)"],
+    "Beans":        ["Beans", "Cluster beans"],
     "Capsicum":     ["Capsicum"],
     "Lady Finger":  ["Bhindi(Ladies Finger)"],
     "Bitter Gourd": ["Bitter gourd"],
@@ -37,85 +40,50 @@ COMMODITY_MAP = {
     "Spinach":      ["Amaranthus"],
 }
 
-import httpx
+# ── Step 1: Check DB ────────────────────────────────────────
+def get_db_record_count(target_date: str) -> int:
+    """Check how many real records exist for this date"""
+    res = supabase.table("price_data")\
+        .select("id", count="exact")\
+        .eq("source", "agmarknet_gov_in")\
+        .eq("recorded_at", target_date)\
+        .execute()
+    return res.count or 0
 
-async def fetch_one_day(client: httpx.AsyncClient, target_date: date, attempt: int = 1) -> tuple:
-    """Fetch ALL Tamil Nadu records for one day — all commodities, all markets"""
+# ── Step 2: Fetch from API ──────────────────────────────────
+async def fetch_day(client: httpx.AsyncClient, target_date: date, attempt: int = 1) -> list:
+    """Fetch all TN records for one day with retry"""
     try:
         r = await client.get(URL, params={
             "api-key": API_KEY,
             "format":  "json",
-            "limit":   1000,  # get max records per day
+            "limit":   1000,
             "filters[arrival_date]": target_date.strftime("%d/%m/%Y"),
         })
         r.raise_for_status()
         all_records = r.json().get("records", [])
-        # Keep ALL Tamil Nadu records (all commodities, all markets)
         tn = [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
-        return (target_date, tn, "success")
+        return tn
 
     except httpx.HTTPStatusError as e:
         code = e.response.status_code
         if code == 429:
-            await asyncio.sleep(10)
-        elif code == 403:
-            return (target_date, [], "forbidden")
+            print(f"    🚦 Rate limited — waiting 15s...")
+            await asyncio.sleep(15)
         if attempt < 3:
             await asyncio.sleep(attempt * 3)
-            return await fetch_one_day(client, target_date, attempt+1)
-        return (target_date, [], f"failed_{code}")
+            return await fetch_day(client, target_date, attempt + 1)
+        return []
 
     except Exception as e:
         if attempt < 3:
             await asyncio.sleep(attempt * 3)
-            return await fetch_one_day(client, target_date, attempt+1)
-        return (target_date, [], "error")
+            return await fetch_day(client, target_date, attempt + 1)
+        return []
 
-
-async def fetch_all_days_parallel(dates: list) -> dict:
-    """Fetch multiple days in parallel — returns {date: records}"""
-    results = {}
-    async with httpx.AsyncClient(timeout=60, limits=httpx.Limits(
-        max_connections=10, max_keepalive_connections=5
-    )) as client:
-        for i in range(0, len(dates), CONCURRENT):
-            batch = dates[i:i+CONCURRENT]
-            tasks  = [fetch_one_day(client, d) for d in batch]
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for result in batch_results:
-                if isinstance(result, Exception):
-                    continue
-                d, records, status = result
-                results[d] = (records, status)
-                total_tn = len(records)
-                # Count how many match our commodities
-                matched = sum(
-                    1 for rec in records
-                    if any(
-                        alias.lower() == str(rec.get("commodity","")).lower()
-                        for aliases in COMMODITY_MAP.values()
-                        for alias in aliases
-                    )
-                )
-                if records:
-                    print(f"  ✅ {d}: {total_tn} TN records | {matched} commodity matches")
-                else:
-                    print(f"  ⚠️  {d}: {status}")
-
-            if i + CONCURRENT < len(dates):
-                await asyncio.sleep(2)
-    return results
-
-
-def build_all_rows(records: list, commodity_ids: dict, fetch_date: date) -> list:
-    """
-    Convert ALL API records to DB rows.
-    Saves EVERY commodity for EVERY market in Tamil Nadu.
-    """
+# ── Step 3: Build DB rows ───────────────────────────────────
+def build_rows(records: list, commodity_ids: dict, fallback_date: date) -> list:
     rows = []
-    unmatched_commodities = set()
-
     for rec in records:
         rec_commodity = str(rec.get("commodity",""))
         modal = float(rec.get("modal_price", 0) or 0)
@@ -126,22 +94,17 @@ def build_all_rows(records: list, commodity_ids: dict, fetch_date: date) -> list
             continue
 
         try:
-            rec_date = datetime.strptime(rec.get("arrival_date",""), "%d/%m/%Y").date()
+            rec_date = datetime.strptime(
+                rec.get("arrival_date",""), "%d/%m/%Y"
+            ).strftime("%Y-%m-%d")
         except:
-            rec_date = fetch_date
+            rec_date = fallback_date.isoformat()
 
-        mandi_name     = str(rec.get("market","Unknown"))[:100]
-        mandi_location = str(rec.get("district",""))[:100]
-        variety        = str(rec.get("variety","")).strip()
-
-        # Make mandi+variety unique to avoid duplicate key
+        mandi_name = str(rec.get("market","Unknown"))[:100]
+        variety    = str(rec.get("variety","")).strip()
         if variety and variety.lower() not in ("other","faq","mixed",""):
-            unique_mandi = f"{mandi_name} ({variety})"[:100]
-        else:
-            unique_mandi = mandi_name
+            mandi_name = f"{mandi_name} ({variety})"
 
-        # Match to our commodity list
-        matched = False
         for commodity, aliases in COMMODITY_MAP.items():
             if any(alias.lower() == rec_commodity.lower() for alias in aliases):
                 cid = commodity_ids.get(commodity)
@@ -151,17 +114,13 @@ def build_all_rows(records: list, commodity_ids: dict, fetch_date: date) -> list
                         "price":          price_kg,
                         "min_price":      round(float(rec.get("min_price") or modal*0.9)/100, 2),
                         "max_price":      round(float(rec.get("max_price") or modal*1.1)/100, 2),
-                        "mandi_name":     unique_mandi,
-                        "mandi_location": mandi_location,
+                        "mandi_name":     mandi_name[:100],
+                        "mandi_location": str(rec.get("district",""))[:100],
                         "state":          "Tamil Nadu",
-                        "recorded_at":    rec_date.isoformat(),
+                        "recorded_at":    rec_date,
                         "source":         "agmarknet_gov_in",
                     })
-                    matched = True
-                    break
-
-        if not matched:
-            unmatched_commodities.add(rec_commodity)
+                break
 
     # Deduplicate
     seen = set()
@@ -171,124 +130,184 @@ def build_all_rows(records: list, commodity_ids: dict, fetch_date: date) -> list
         if key not in seen:
             seen.add(key)
             unique.append(row)
-
     return unique
 
-
-def save_to_db(rows: list) -> int:
-    """Save in batches of 200 using upsert"""
-    if not rows:
-        return 0
+# ── Step 4: Save instantly to DB ───────────────────────────
+def save_instantly(rows: list) -> int:
+    """Save rows immediately one by one"""
     saved = 0
-    for i in range(0, len(rows), 200):
-        batch = rows[i:i+200]
+    for row in rows:
         try:
-            result = supabase.table("price_data").upsert(
-                batch,
-                on_conflict="commodity_id,mandi_name,recorded_at"
-            ).execute()
-            saved += len(result.data) if result.data else len(batch)
+            supabase.table("price_data").insert(row).execute()
+            saved += 1
         except Exception as e:
-            # fallback insert one by one
-            for row in batch:
-                try:
-                    supabase.table("price_data").insert(row).execute()
-                    saved += 1
-                except Exception as e2:
-                    err = str(e2)
-                    if "duplicate" not in err.lower() and "21000" not in err:
-                        pass  # skip silently
+            err = str(e)
+            if "duplicate" not in err.lower() and "21000" not in err:
+                pass  # skip silently
     return saved
 
+# ── Step 5: Fill gaps using interpolation ──────────────────
+def get_price_for_date(commodity_id: str, mandi_name: str, target_date: str) -> float | None:
+    """Get price for specific commodity+mandi+date"""
+    res = supabase.table("price_data")\
+        .select("price")\
+        .eq("commodity_id", commodity_id)\
+        .eq("mandi_name", mandi_name)\
+        .eq("recorded_at", target_date)\
+        .in_("source", ["agmarknet_gov_in", "interpolated"])\
+        .limit(1)\
+        .execute()
+    if res.data:
+        return float(res.data[0]["price"])
+    return None
 
+def fill_gap_for_date(target_date: date, commodity_ids: dict):
+    """Fill missing date using (previous day + next day) / 2"""
+    date_str  = target_date.isoformat()
+    prev_date = (target_date - timedelta(days=1)).isoformat()
+    next_date = (target_date + timedelta(days=1)).isoformat()
+
+    # Get all mandi+commodity combos from previous day
+    prev_res = supabase.table("price_data")\
+        .select("commodity_id, mandi_name, mandi_location, price, min_price, max_price")\
+        .eq("recorded_at", prev_date)\
+        .in_("source", ["agmarknet_gov_in", "interpolated"])\
+        .execute()
+
+    if not prev_res.data:
+        print(f"    ⚠️  No previous day data for interpolation")
+        return 0
+
+    filled = 0
+    rows_to_save = []
+
+    for prev_row in prev_res.data:
+        cid        = prev_row["commodity_id"]
+        mandi_name = prev_row["mandi_name"]
+        prev_price = float(prev_row["price"])
+
+        # Check if already exists for target date
+        existing = supabase.table("price_data")\
+            .select("id")\
+            .eq("commodity_id", cid)\
+            .eq("mandi_name", mandi_name)\
+            .eq("recorded_at", date_str)\
+            .execute()
+        if existing.data:
+            continue  # already have data for this combo
+
+        # Try to get next day price
+        next_price = get_price_for_date(cid, mandi_name, next_date)
+
+        if next_price:
+            # (previous + next) / 2
+            interp_price = round((prev_price + next_price) / 2, 2)
+            method = "prev+next/2"
+        else:
+            # Use previous day price (same as yesterday)
+            interp_price = prev_price
+            method = "prev_day"
+
+        rows_to_save.append({
+            "commodity_id":   cid,
+            "price":          interp_price,
+            "min_price":      round(interp_price * 0.92, 2),
+            "max_price":      round(interp_price * 1.08, 2),
+            "mandi_name":     mandi_name,
+            "mandi_location": prev_row.get("mandi_location",""),
+            "state":          "Tamil Nadu",
+            "recorded_at":    date_str,
+            "source":         "interpolated",
+        })
+
+    # Save all interpolated rows
+    for row in rows_to_save:
+        try:
+            supabase.table("price_data").insert(row).execute()
+            filled += 1
+        except Exception as e:
+            if "duplicate" not in str(e).lower() and "21000" not in str(e):
+                pass
+    return filled
+
+# ── Main ────────────────────────────────────────────────────
 async def seed():
     print("="*60)
-    print("🚀 AgriPrice — Fetch ALL Commodities, ALL Markets, 30 Days")
+    print("🚀 Smart Incremental Fetch — 30 Days All TN Markets")
     print("="*60)
 
     today = date.today()
 
-    # Get commodity IDs from DB
+    # Get commodity IDs
     comm_res = supabase.table("commodities").select("id,name").execute()
     commodity_ids = {c["name"]: c["id"] for c in comm_res.data}
-    print(f"✅ {len(commodity_ids)} commodities in DB")
+    print(f"✅ {len(commodity_ids)} commodities in DB\n")
 
-    # Check existing dates
-    existing_res = supabase.table("price_data")\
-        .select("recorded_at")\
-        .eq("source", "agmarknet_gov_in")\
-        .execute()
-    existing_dates = set(row["recorded_at"] for row in (existing_res.data or []))
-    print(f"📅 Already in DB: {len(existing_dates)} dates")
+    # Process each day
+    stats = {"skipped": 0, "fetched": 0, "failed": 0, "saved": 0}
+    failed_dates = []
 
-    # Find missing dates in last 30 days
-    missing_dates = [
-        today - timedelta(days=i)
-        for i in range(KEEP_DAYS)
-        if (today - timedelta(days=i)).isoformat() not in existing_dates
-    ]
-    print(f"📥 Missing: {len(missing_dates)} days\n")
+    async with httpx.AsyncClient(timeout=60) as client:
+        for i in range(KEEP_DAYS):
+            d = today - timedelta(days=i)
+            date_str = d.isoformat()
 
-    if not missing_dates:
-        print("✅ All 30 days already in DB! Nothing to fetch.")
-        # Still delete old records
-        cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
-        supabase.table("price_data").delete().lt("recorded_at", cutoff).execute()
-        return
+            # ── Check DB first ──────────────────────────
+            existing_count = get_db_record_count(date_str)
+            if existing_count >= EXPECTED_RECORDS_PER_DAY:
+                print(f"  ⏭️  {date_str}: {existing_count} records already in DB — skip")
+                stats["skipped"] += 1
+                continue
 
-    batches = (len(missing_dates) + CONCURRENT - 1) // CONCURRENT
-    est = batches * 3
-    print(f"⏱️  Estimated: ~{est}s for {len(missing_dates)} days ({CONCURRENT} parallel)")
-    print(f"📡 Fetching ALL TN commodities + ALL markets...\n")
+            # ── Fetch from API ──────────────────────────
+            print(f"  📡 {date_str}: fetching...", end=" ", flush=True)
+            records = await fetch_day(client, d)
 
-    start = datetime.now()
+            if records:
+                # ── Build rows ──────────────────────────
+                rows = build_rows(records, commodity_ids, d)
 
-    # Fetch all missing days in parallel
-    all_results = await fetch_all_days_parallel(missing_dates)
+                # ── Save instantly to DB ────────────────
+                saved = save_instantly(rows)
+                stats["fetched"] += 1
+                stats["saved"]   += saved
+                print(f"✅ {len(records)} TN records → {saved} saved to DB")
+            else:
+                # ── Fetch failed ────────────────────────
+                stats["failed"] += 1
+                failed_dates.append(d)
+                print(f"❌ fetch failed — will interpolate later")
 
-    # Build all DB rows
-    all_rows = []
-    success_days = 0
-    failed_days  = []
+            await asyncio.sleep(1)  # small delay to avoid rate limit
 
-    for d, (records, status) in all_results.items():
-        if records:
-            rows = build_all_rows(records, commodity_ids, d)
-            all_rows.extend(rows)
-            success_days += 1
-        else:
-            failed_days.append(d)
+    # ── Fill gaps for failed dates ──────────────────────────
+    if failed_dates:
+        print(f"\n🔧 Filling {len(failed_dates)} failed dates with interpolation...")
+        total_filled = 0
+        for d in sorted(failed_dates):
+            print(f"  🔧 {d.isoformat()}: interpolating...", end=" ", flush=True)
+            filled = fill_gap_for_date(d, commodity_ids)
+            total_filled += filled
+            print(f"✅ {filled} rows filled using (prev+next)/2")
+        print(f"  ✅ Total interpolated: {total_filled} rows")
 
-    # Save to DB
-    print(f"\n💾 Saving {len(all_rows)} rows to Supabase...")
-    total_saved = save_to_db(all_rows)
-
-    elapsed = (datetime.now() - start).seconds
-
-    # Fill gaps for failed days
-    if failed_days:
-        print(f"\n🔧 Gap-filling {len(failed_days)} failed days...")
-        from services.gap_filler import fill_gaps
-        filled = fill_gaps(supabase, KEEP_DAYS)
-        print(f"  ✅ {filled} gaps filled with interpolated data")
-
-    # Delete records older than 30 days
+    # ── Delete records older than 30 days ───────────────────
     cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
-    del_res = supabase.table("price_data").delete().lt("recorded_at", cutoff).execute()
+    del_res = supabase.table("price_data")\
+        .delete().lt("recorded_at", cutoff).execute()
     deleted = len(del_res.data) if del_res.data else 0
     if deleted > 0:
-        print(f"\n🗑️  Deleted {deleted} records older than {KEEP_DAYS} days")
+        print(f"\n🗑️  Deleted {deleted} old records (older than {KEEP_DAYS} days)")
 
-    # Final summary
+    # ── Final summary ────────────────────────────────────────
+    total_res = supabase.table("price_data")\
+        .select("source", count="exact").execute()
+
     print(f"\n{'='*60}")
-    print(f"⏱️  Time taken    : {elapsed}s ({elapsed//60}m {elapsed%60}s)")
-    print(f"✅ Days fetched  : {success_days}/{len(missing_dates)}")
-    print(f"⚠️  Days failed   : {len(failed_days)} → gap filled")
-    print(f"💾 Records saved : {total_saved}")
-    print(f"\n📊 What's in DB now:")
-    print(f"   • All Tamil Nadu markets (Koyambedu, Salem, Madurai, etc.)")
-    print(f"   • All 15 commodities per market per day")
-    print(f"   • Last {KEEP_DAYS} days only (older auto-deleted)")
+    print(f"⏭️  Skipped (already in DB) : {stats['skipped']} days")
+    print(f"✅ Fetched & saved          : {stats['fetched']} days")
+    print(f"❌ Failed (interpolated)    : {stats['failed']} days")
+    print(f"💾 Total records saved      : {stats['saved']}")
     print(f"\n🔄 Refresh http://localhost:8080!")
 
 if __name__ == "__main__":
