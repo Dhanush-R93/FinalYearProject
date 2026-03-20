@@ -20,7 +20,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 API_KEY   = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
 URL       = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
 KEEP_DAYS = 30
-EXPECTED_RECORDS_PER_DAY = 200  # if DB has >= this, skip that date
+EXPECTED_RECORDS_PER_DAY = 50   # if DB has >= this, skip that date
 
 COMMODITY_MAP = {
     "Tomato":       ["Tomato"],
