@@ -262,3 +262,14 @@ async def run_incremental_fetch(supabase):
             logger.warning(f"⚠️  {len(permanent)} dates permanently unavailable: {permanent}")
             logger.warning("   Simulated data will fill these gaps on frontend")
     logger.info("✅ Incremental fetch complete!")
+
+async def run_incremental_fetch_with_gap_fill(supabase):
+    """Full pipeline: fetch missing + retry + fill gaps"""
+    await run_incremental_fetch(supabase)
+    
+    # Fill any remaining gaps with interpolation
+    try:
+        from services.gap_filler import fill_gaps
+        fill_gaps(supabase, KEEP_DAYS)
+    except Exception as e:
+        logger.warning(f"Gap fill failed: {e}")

@@ -62,7 +62,7 @@ supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
 async def lifespan(app: FastAPI):
     # ── Incremental fetch on startup ──────────────────────
     try:
-        from services.daily_fetcher import run_incremental_fetch
+        from services.daily_fetcher import run_incremental_fetch_with_gap_fill
         from supabase import create_client
         import os
         _sb = create_client(
@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
             os.getenv("SUPABASE_SERVICE_ROLE_KEY","")
         )
         logger.info("🔄 Running incremental data fetch on startup...")
-        asyncio.create_task(run_incremental_fetch(_sb))
+        asyncio.create_task(run_incremental_fetch_with_gap_fill(_sb))
     except Exception as e:
         logger.warning(f"Incremental fetch skipped: {e}")
 
