@@ -134,16 +134,30 @@ def build_rows(records: list, commodity_ids: dict, fallback_date: date) -> list:
 
 # ── Step 4: Save instantly to DB ───────────────────────────
 def save_instantly(rows: list) -> int:
-    """Save rows immediately one by one"""
+    """Save rows immediately using upsert in batches of 50"""
+    if not rows:
+        return 0
     saved = 0
-    for row in rows:
+    for i in range(0, len(rows), 50):
+        batch = rows[i:i+50]
         try:
-            supabase.table("price_data").insert(row).execute()
-            saved += 1
+            result = supabase.table("price_data").upsert(
+                batch,
+                on_conflict="commodity_id,mandi_name,recorded_at"
+            ).execute()
+            saved += len(result.data) if result.data else len(batch)
         except Exception as e:
-            err = str(e)
-            if "duplicate" not in err.lower() and "21000" not in err:
-                pass  # skip silently
+            print(f"\n    ❌ Save error: {str(e)[:120]}")
+            # fallback: insert one by one
+            for row in batch:
+                try:
+                    supabase.table("price_data").upsert(
+                        row,
+                        on_conflict="commodity_id,mandi_name,recorded_at"
+                    ).execute()
+                    saved += 1
+                except Exception as e2:
+                    print(f"    ❌ Row error: {str(e2)[:80]}")
     return saved
 
 # ── Step 5: Fill gaps using interpolation ──────────────────
