@@ -1,5 +1,7 @@
 """
-seed_prices.py — Fetch REAL data from data.gov.in and save to Supabase
+seed_prices.py — FIRST TIME ONLY: Fetch last 90 days and store in DB
+Run once: py -3.11 seed_prices.py
+After that, backend auto-fetches only missing days on startup
 """
 import asyncio
 import numpy as np
@@ -54,14 +56,32 @@ async def fetch_tn_records(target_date: date) -> list:
             })
             r.raise_for_status()
             all_records = r.json().get("records", [])
-            tn = [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
-            return tn
+            return [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
     except Exception as e:
         print(f"  ⚠️  {target_date}: {e}")
         return []
 
+def get_dates_in_db() -> set:
+    """Get all dates already stored in DB"""
+    res = supabase.table("price_data")\
+        .select("recorded_at")\
+        .eq("source", "agmarknet_gov_in")\
+        .execute()
+    return set(row["recorded_at"] for row in (res.data or []))
+
+def delete_old_records(keep_days: int = 90):
+    """Delete records older than keep_days"""
+    cutoff = (date.today() - timedelta(days=keep_days)).isoformat()
+    res = supabase.table("price_data")\
+        .delete()\
+        .lt("recorded_at", cutoff)\
+        .execute()
+    deleted = len(res.data) if res.data else 0
+    if deleted > 0:
+        print(f"🗑️  Deleted {deleted} old records (older than {keep_days} days)")
+    return deleted
+
 def deduplicate(rows: list) -> list:
-    """Remove duplicate rows by commodity_id+mandi_name+recorded_at"""
     seen = set()
     unique = []
     for row in rows:
@@ -71,13 +91,11 @@ def deduplicate(rows: list) -> list:
             unique.append(row)
     return unique
 
-def save_rows(rows: list, label: str) -> int:
-    """Deduplicate then save using insert one by one to avoid batch conflicts"""
+def save_rows(rows: list) -> int:
     if not rows:
         return 0
     rows = deduplicate(rows)
     saved = 0
-    # Insert one by one to avoid any duplicate conflicts
     for row in rows:
         try:
             supabase.table("price_data").insert(row).execute()
@@ -85,132 +103,109 @@ def save_rows(rows: list, label: str) -> int:
         except Exception as e:
             err = str(e)
             if "duplicate" in err.lower() or "unique" in err.lower() or "21000" in err:
-                pass  # skip duplicates silently
+                pass
             else:
-                print(f"    ❌ {label}: {err[:80]}")
+                print(f"  ❌ Save error: {err[:80]}")
     return saved
 
-async def seed():
-    print(f"🔑 API Key: {API_KEY[:25]}...")
-    print("🌾 Fetching REAL Tamil Nadu data from Agmarknet\n")
+def build_rows(records: list, commodity_ids: dict, fetch_date: date) -> dict:
+    """Build DB rows from API records, grouped by commodity"""
+    result = {c: [] for c in TRACKED_COMMODITIES}
 
-    # Clear old data
-    supabase.table("price_data").delete().neq(
-        "id","00000000-0000-0000-0000-000000000000"
-    ).execute()
-    print("✅ Cleared old data\n")
+    for rec in records:
+        rec_commodity = str(rec.get("commodity",""))
+        modal = float(rec.get("modal_price", 0) or 0)
+        if modal <= 0:
+            continue
+        price_kg = round(modal / 100, 2)
+        if not (1 < price_kg < 500):
+            continue
+
+        try:
+            rec_date = datetime.strptime(
+                rec.get("arrival_date",""), "%d/%m/%Y"
+            ).date()
+        except:
+            rec_date = fetch_date
+
+        variety = str(rec.get("variety","")).strip()
+        mandi_name = str(rec.get("market","Unknown"))[:100]
+        if variety and variety.lower() not in ("other","faq","mixed",""):
+            mandi_name = f"{mandi_name} ({variety})"
+
+        for commodity, aliases in COMMODITY_MAP.items():
+            if any(alias.lower() == rec_commodity.lower() for alias in aliases):
+                commodity_id = commodity_ids.get(commodity)
+                if commodity_id:
+                    result[commodity].append({
+                        "commodity_id":   commodity_id,
+                        "price":          price_kg,
+                        "min_price":      round(float(rec.get("min_price") or modal*0.9)/100, 2),
+                        "max_price":      round(float(rec.get("max_price") or modal*1.1)/100, 2),
+                        "mandi_name":     mandi_name,
+                        "mandi_location": str(rec.get("district",""))[:100],
+                        "state":          "Tamil Nadu",
+                        "recorded_at":    rec_date.isoformat(),
+                        "source":         "agmarknet_gov_in",
+                    })
+    return result
+
+async def seed():
+    print("="*55)
+    print("🌾 AgriPrice — First Time Data Setup (90 days)")
+    print("="*55)
+    print(f"🔑 API Key: {API_KEY[:25]}...\n")
 
     today = date.today()
-
-    # Fetch last 30 days
-    print("📡 Fetching last 30 days from data.gov.in...\n")
-    all_tn_records = []
-    for i in range(90):
-        d = today - timedelta(days=i)
-        records = await fetch_tn_records(d)
-        if records:
-            for rec in records:
-                rec["_fetched_date"] = d
-            all_tn_records.extend(records)
-            print(f"  ✅ {d}: {len(records)} TN records")
-        else:
-            print(f"  ⚠️  {d}: no data")
-        await asyncio.sleep(1.5)
-
-    print(f"\n📊 Total real TN records: {len(all_tn_records)}\n")
 
     # Get commodity IDs
     comm_res = supabase.table("commodities").select("id,name").execute()
     commodity_ids = {c["name"]: c["id"] for c in comm_res.data}
-    print(f"✅ DB connected — {len(commodity_ids)} commodities\n")
-    print("💾 Saving to Supabase...\n")
+    print(f"✅ {len(commodity_ids)} commodities found in DB\n")
 
+    # Check which dates already exist
+    existing_dates = get_dates_in_db()
+    print(f"📅 Dates already in DB: {len(existing_dates)}")
+
+    # Find missing dates in last 90 days
+    missing_dates = []
+    for i in range(90):
+        d = today - timedelta(days=i)
+        if d.isoformat() not in existing_dates:
+            missing_dates.append(d)
+
+    print(f"📥 Missing dates to fetch: {len(missing_dates)}\n")
+
+    if not missing_dates:
+        print("✅ All 90 days already in DB! Nothing to fetch.")
+        delete_old_records(90)
+        return
+
+    # Fetch only missing dates
+    print(f"📡 Fetching {len(missing_dates)} missing days...\n")
     total_real = 0
-    total_sim  = 0
 
-    for commodity in TRACKED_COMMODITIES:
-        commodity_id = commodity_ids.get(commodity)
-        if not commodity_id:
-            continue
+    for d in missing_dates:
+        records = await fetch_tn_records(d)
+        if records:
+            rows_by_commodity = build_rows(records, commodity_ids, d)
+            day_saved = 0
+            for commodity, rows in rows_by_commodity.items():
+                day_saved += save_rows(rows)
+            total_real += day_saved
+            print(f"  ✅ {d}: {len(records)} TN fetched → {day_saved} saved")
+        else:
+            print(f"  ⚠️  {d}: no data from API")
+        await asyncio.sleep(1.5)
 
-        aliases = COMMODITY_MAP.get(commodity, [commodity])
-        real_rows = []
-
-        for rec in all_tn_records:
-            rec_commodity = str(rec.get("commodity",""))
-            if not any(alias.lower() == rec_commodity.lower() for alias in aliases):
-                continue
-            modal = float(rec.get("modal_price", 0) or 0)
-            if modal <= 0:
-                continue
-            price_kg = round(modal / 100, 2)
-            if not (1 < price_kg < 500):
-                continue
-            try:
-                rec_date = datetime.strptime(
-                    rec.get("arrival_date",""), "%d/%m/%Y"
-                ).date()
-            except:
-                rec_date = rec.get("_fetched_date", today)
-
-            mandi_name = str(rec.get("market","Unknown"))[:100]
-            # Make mandi_name unique per variety to avoid duplicates
-            variety = str(rec.get("variety","")).strip()
-            if variety and variety.lower() not in ("other","faq","mixed",""):
-                mandi_name = f"{mandi_name} ({variety})"
-
-            real_rows.append({
-                "commodity_id":   commodity_id,
-                "price":          price_kg,
-                "min_price":      round(float(rec.get("min_price") or modal*0.9) / 100, 2),
-                "max_price":      round(float(rec.get("max_price") or modal*1.1) / 100, 2),
-                "mandi_name":     mandi_name[:100],
-                "mandi_location": str(rec.get("district",""))[:100],
-                "state":          "Tamil Nadu",
-                "recorded_at":    rec_date.isoformat(),
-                "source":         "agmarknet_gov_in",
-            })
-
-        real_saved = save_rows(real_rows, commodity)
-        total_real += real_saved
-
-        # Simulated history
-        base = BASE_PRICES_KG.get(commodity, 30)
-        np.random.seed(hash(commodity) % 2**31)
-        sim_rows = []
-        price = float(base)
-        for day_offset in range(90):
-            record_date = today - timedelta(days=90 - day_offset)
-            if record_date >= today - timedelta(days=30):
-                continue
-            month = record_date.month
-            seasonal = 1.20 if month in [4,5,6] else (0.85 if month in [11,12,1] else 1.0)
-            price = max(price*(1+float(np.random.uniform(-0.04,0.04)))*seasonal, base*0.6)
-            price = min(price, base*1.8)
-            sim_rows.append({
-                "commodity_id":   commodity_id,
-                "price":          round(price, 2),
-                "min_price":      round(price*0.87, 2),
-                "max_price":      round(price*1.13, 2),
-                "mandi_name":     "Koyambedu",
-                "mandi_location": "Chennai",
-                "state":          "Tamil Nadu",
-                "recorded_at":    record_date.isoformat(),
-                "source":         "simulated",
-            })
-
-        sim_saved = save_rows(sim_rows, f"{commodity}_sim")
-        total_sim += sim_saved
-
-        status = "🌐 LIVE" if real_saved > 0 else "📊 sim "
-        print(f"  {status} | {commodity:15} | {real_saved:4} real | {sim_saved} sim")
+    # Delete records older than 90 days
+    print()
+    delete_old_records(90)
 
     print(f"\n{'='*55}")
-    print(f"🌐 Real govt records : {total_real}")
-    print(f"📊 Simulated records : {total_sim}")
-    if total_real > 0:
-        print(f"🎉 SUCCESS! Real Agmarknet data saved!")
-    print(f"\n🔄 Refresh http://localhost:8080!")
+    print(f"🌐 Real records saved: {total_real}")
+    print(f"✅ DB now has last 90 days of Tamil Nadu prices")
+    print(f"🔄 Refresh http://localhost:8080!")
 
 if __name__ == "__main__":
     asyncio.run(seed())

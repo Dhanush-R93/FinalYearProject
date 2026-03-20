@@ -60,6 +60,21 @@ supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Incremental fetch on startup ──────────────────────
+    try:
+        from services.daily_fetcher import run_incremental_fetch
+        from supabase import create_client
+        import os
+        _sb = create_client(
+            os.getenv("SUPABASE_URL",""),
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY","")
+        )
+        logger.info("🔄 Running incremental data fetch on startup...")
+        asyncio.create_task(run_incremental_fetch(_sb))
+    except Exception as e:
+        logger.warning(f"Incremental fetch skipped: {e}")
+
+    # ── Start scheduler ───────────────────────────────────
     scheduler = create_scheduler()
     scheduler.start()
     logger.info("✅ APScheduler started — daily pipeline active")
