@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 API_KEY   = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
 URL       = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
-KEEP_DAYS = 90
+KEEP_DAYS = 30
 MAX_RETRY = 3
 CONCURRENT = 5  # fetch 5 days at same time
 
