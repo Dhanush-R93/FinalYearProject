@@ -96,12 +96,8 @@ def build_rows(records: list, commodity_ids: dict, fallback_date: date) -> list:
         if not (1 < price_kg < 500):
             continue
 
-        try:
-            rec_date = datetime.strptime(
-                rec.get("arrival_date",""), "%d/%m/%Y"
-            ).strftime("%Y-%m-%d")
-        except:
-            rec_date = fallback_date.isoformat()
+        # Use the queried date (API returns same date for all queries)
+        rec_date = fallback_date.isoformat()
 
         mandi_name = str(rec.get("market","Unknown"))[:100]
         variety    = str(rec.get("variety","")).strip()
