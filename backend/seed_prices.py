@@ -41,6 +41,18 @@ COMMODITY_MAP = {
 }
 
 # ── Step 1: Check DB ────────────────────────────────────────
+def get_existing_keys(target_date: str) -> set:
+    """Get existing commodity+mandi keys for this date"""
+    res = supabase.table("price_data")\
+        .select("commodity_id, mandi_name")\
+        .eq("source", "agmarknet_gov_in")\
+        .eq("recorded_at", target_date)\
+        .execute()
+    return set(
+        (r["commodity_id"], r["mandi_name"])
+        for r in (res.data or [])
+    )
+
 def get_db_record_count(target_date: str) -> int:
     """Check how many real records exist for this date"""
     from datetime import datetime as dt
@@ -267,24 +279,37 @@ async def seed():
 
             # ── Check DB first ──────────────────────────
             existing_count = get_db_record_count(date_str)
-            if existing_count >= EXPECTED_RECORDS_PER_DAY:
-                print(f"  ⏭️  {date_str}: {existing_count} records already in DB — skip")
-                stats["skipped"] += 1
-                continue
+            if existing_count > 0:
+                # Get existing keys to skip already stored records
+                existing_keys = get_existing_keys(date_str)
+                print(f"  📡 {date_str}: {existing_count} in DB — fetching only missing...", end=" ", flush=True)
+            else:
+                existing_keys = set()
+                print(f"  📡 {date_str}: fetching...", end=" ", flush=True)
 
             # ── Fetch from API ──────────────────────────
-            print(f"  📡 {date_str}: fetching...", end=" ", flush=True)
             records = await fetch_day(client, d)
 
             if records:
                 # ── Build rows ──────────────────────────
                 rows = build_rows(records, commodity_ids, d)
 
-                # ── Save instantly to DB ────────────────
-                saved = save_instantly(rows)
+                # ── Filter out already stored records ───
+                new_rows = [
+                    row for row in rows
+                    if (row["commodity_id"], row["mandi_name"]) not in existing_keys
+                ]
+
+                if not new_rows:
+                    print(f"⏭️  all {len(rows)} records already in DB — skip")
+                    stats["skipped"] += 1
+                    continue
+
+                # ── Save only NEW records instantly ─────
+                saved = save_instantly(new_rows)
                 stats["fetched"] += 1
                 stats["saved"]   += saved
-                print(f"✅ {len(records)} TN records → {saved} saved to DB")
+                print(f"✅ {len(records)} TN fetched → {saved} new saved ({len(rows)-len(new_rows)} skipped)")
             else:
                 # ── Fetch failed ────────────────────────
                 stats["failed"] += 1
