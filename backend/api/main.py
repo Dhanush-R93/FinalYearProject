@@ -14,6 +14,7 @@ Endpoints:
   POST /pipeline/run             → manually trigger full pipeline
 """
 
+import asyncio
 import json
 import logging
 import os
