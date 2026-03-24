@@ -87,7 +87,7 @@ export function useAIChat() {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) updateAssistant(content);
-          } catch {
+          } catch (_e) {
             buffer = line + "\n" + buffer;
             break;
           }
@@ -107,7 +107,7 @@ export function useAIChat() {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) updateAssistant(content);
-          } catch {}
+          } catch (_e) {}
         }
       }
     } catch (e) {
@@ -160,7 +160,7 @@ export function useAIChat() {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) updateAssistant(content);
-          } catch {
+          } catch (_e) {
             buffer = line + "\n" + buffer;
             break;
           }
@@ -180,7 +180,7 @@ export function useAIChat() {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) updateAssistant(content);
-          } catch {}
+          } catch (_e) {}
         }
       }
     } catch (e) {
