@@ -79,7 +79,8 @@ async def generate():
             daily = defaultdict(list)
             for row in price_res.data:
                 daily[row["recorded_at"]].append(float(row["price"]))
-            prices = [np.mean(v) for v in sorted(daily.items(), key=lambda x: x[0])]
+            # Fix: extract values list correctly
+            prices = [float(np.mean(list(v))) for k, v in sorted(daily.items(), key=lambda x: x[0])]
             current_price = prices[-1]
             data_source = "real"
         else:
