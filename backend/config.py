@@ -84,7 +84,12 @@ API_PORT    = 8000
 CORS_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
-    os.getenv("FRONTEND_URL", "https://your-production-domain.com"),
+    "http://localhost:8080",
+    "http://localhost:8081",
+    "http://10.111.85.179:8080",
+    "http://10.111.85.179:8081",
+    "http://172.30.192.1:8080",
+    os.getenv("FRONTEND_URL", "http://localhost:8080"),
 ]
 
 # ─────────────────────────────────────────────────────────
