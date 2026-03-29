@@ -25,7 +25,7 @@ export function Navbar() {
     <nav className={cn(
       "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
       scrolled
-        ? "bg-[#0a0f0a]/90 backdrop-blur-xl border-b border-white/5 shadow-[0_4px_30px_rgba(0,0,0,0.5)]"
+        ? "bg-[#0a0f0a]/90 backdrop-blur-xl border-b border-[rgba(255,255,255,0.05)] shadow-[0_4px_30px_rgba(0,0,0,0.5)]"
         : "bg-transparent"
     )}>
       <div className="container px-4 max-w-7xl mx-auto">
@@ -46,7 +46,7 @@ export function Navbar() {
           <div className="hidden md:flex items-center gap-1">
             {NAV_LINKS.map(link => (
               <a key={link.label} href={link.href}
-                className="text-white/50 hover:text-green-400 text-sm font-medium px-4 py-2 rounded-xl hover:bg-white/5 transition-all"
+                className="text-white/50 hover:text-green-400 text-sm font-medium px-4 py-2 rounded-xl hover:bg-[rgba(255,255,255,0.05)] transition-all"
               >
                 {link.label}
               </a>
@@ -75,11 +75,11 @@ export function Navbar() {
 
         {/* Mobile menu */}
         {open && (
-          <div className="md:hidden border-t border-white/5 py-4 space-y-1">
+          <div className="md:hidden border-t border-[rgba(255,255,255,0.05)] py-4 space-y-1">
             {NAV_LINKS.map(link => (
               <a key={link.label} href={link.href}
                 onClick={() => setOpen(false)}
-                className="block text-white/60 hover:text-green-400 text-sm font-medium px-4 py-3 rounded-xl hover:bg-white/5 transition-all"
+                className="block text-white/60 hover:text-green-400 text-sm font-medium px-4 py-3 rounded-xl hover:bg-[rgba(255,255,255,0.05)] transition-all"
               >
                 {link.label}
               </a>

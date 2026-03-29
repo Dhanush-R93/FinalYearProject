@@ -141,7 +141,7 @@ export function HeroSection() {
 
         {/* Search bar */}
         <div className="relative max-w-xl mx-auto mb-10">
-          <div className="flex items-center bg-white/5 border border-white/10 rounded-2xl px-5 py-4 gap-3 focus-within:border-green-500/50 focus-within:bg-white/8 transition-all">
+          <div className="flex items-center bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.10)] rounded-2xl px-5 py-4 gap-3 focus-within:border-green-500/50 focus-within:bg-[rgba(255,255,255,0.08)] transition-all">
             <Search className="w-5 h-5 text-white/30 shrink-0"/>
             <input
               type="text"
@@ -165,7 +165,7 @@ export function HeroSection() {
 
           {/* Suggestions dropdown */}
           {suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-[#111] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-50">
+            <div className="absolute top-full left-0 right-0 mt-2 bg-[#111] border border-[rgba(255,255,255,0.10)] rounded-2xl overflow-hidden shadow-2xl z-50">
               {suggestions.map(s => (
                 <button key={s}
                   onClick={() => {
@@ -194,7 +194,7 @@ export function HeroSection() {
           </button>
           <button
             onClick={() => scrollTo("predictions")}
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium px-8 py-4 rounded-2xl text-base transition-all"
+            className="flex items-center gap-2 bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.10)] border border-[rgba(255,255,255,0.10)] text-white font-medium px-8 py-4 rounded-2xl text-base transition-all"
           >
             <TrendingUp className="w-5 h-5 text-green-400"/>
             10-Day Forecast
@@ -208,7 +208,7 @@ export function HeroSection() {
             { value: "40+", label: "TN Markets" },
             { value: "15", label: "Vegetables" },
           ].map(stat => (
-            <div key={stat.label} className="bg-white/3 border border-white/8 rounded-2xl p-5">
+            <div key={stat.label} className="bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] rounded-2xl p-5">
               <p className="text-2xl sm:text-3xl font-black text-white mb-1">{stat.value}</p>
               <p className="text-white/40 text-sm">{stat.label}</p>
             </div>

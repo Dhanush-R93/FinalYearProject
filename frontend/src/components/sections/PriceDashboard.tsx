@@ -41,7 +41,7 @@ export function PriceDashboard() {
           <button
             onClick={() => refetch()}
             disabled={isFetching}
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 px-4 py-2 rounded-xl text-sm transition-all"
+            className="flex items-center gap-2 bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.10)] border border-[rgba(255,255,255,0.10)] text-white/70 px-4 py-2 rounded-xl text-sm transition-all"
           >
             <RefreshCw className={cn("w-4 h-4", isFetching && "animate-spin")}/>
             Refresh
@@ -50,7 +50,7 @@ export function PriceDashboard() {
 
         {/* Controls */}
         <div className="flex flex-col sm:flex-row gap-3 mb-8">
-          <div className="flex-1 flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5">
+          <div className="flex-1 flex items-center gap-3 bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.10)] rounded-xl px-4 py-2.5">
             <Search className="w-4 h-4 text-white/30"/>
             <input
               value={search}
@@ -67,7 +67,7 @@ export function PriceDashboard() {
                   "px-4 py-2 rounded-xl text-sm font-medium transition-all capitalize",
                   sortBy === s
                     ? "bg-green-500 text-black"
-                    : "bg-white/5 text-white/50 hover:bg-white/10"
+                    : "bg-[rgba(255,255,255,0.05)] text-white/50 hover:bg-white/10"
                 )}>
                 {s}
               </button>
@@ -79,7 +79,7 @@ export function PriceDashboard() {
         {isLoading ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             {Array(15).fill(0).map((_, i) => (
-              <div key={i} className="h-40 rounded-2xl bg-white/5 animate-pulse"/>
+              <div key={i} className="h-40 rounded-2xl bg-[rgba(255,255,255,0.05)] animate-pulse"/>
             ))}
           </div>
         ) : (
@@ -92,14 +92,14 @@ export function PriceDashboard() {
 
               return (
                 <div key={item.id}
-                  className="group relative bg-white/3 hover:bg-white/6 border border-white/8 hover:border-green-500/30 rounded-2xl p-5 transition-all duration-300 cursor-pointer hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(34,197,94,0.08)]"
+                  className="group relative bg-[rgba(255,255,255,0.03)] hover:bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.08)] hover:border-green-500/30 rounded-2xl p-5 transition-all duration-300 cursor-pointer hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(34,197,94,0.08)]"
                 >
                   {/* Change badge */}
                   <div className={cn(
                     "absolute top-3 right-3 flex items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-bold",
                     isUp ? "bg-red-500/15 text-red-400" :
                     isDown ? "bg-green-500/15 text-green-400" :
-                    "bg-white/10 text-white/40"
+                    "bg-[rgba(255,255,255,0.10)] text-white/40"
                   )}>
                     {isUp ? <TrendingUp className="w-3 h-3"/> :
                      isDown ? <TrendingDown className="w-3 h-3"/> :
