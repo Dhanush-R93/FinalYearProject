@@ -1,163 +1,226 @@
+import { useState, useEffect } from "react";
+import { ArrowRight, TrendingUp, MapPin, Search, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, TrendingUp, BarChart3, Shield, Leaf, ChevronDown, Sparkles } from "lucide-react";
-import { useParallax } from "@/hooks/useParallax";
 
-function FloatingParticle({ className, speed = 1 }: { className: string; speed?: number }) {
-  return <div className={`absolute rounded-full opacity-20 animate-float ${className}`} />;
-}
+const VEGETABLES = [
+  "Tomato","Onion","Potato","Brinjal","Cabbage","Cauliflower",
+  "Carrot","Beans","Capsicum","Lady Finger","Bitter Gourd",
+  "Bottle Gourd","Drumstick","Pumpkin","Spinach"
+];
 
-function CountUpStat({ value, suffix = "", label, icon: Icon, colorClass }: {
-  value: string; suffix?: string; label: string; icon: any; colorClass: string;
-}) {
-  return (
-    <div className="stat-card group hover:border-primary/30 hover:-translate-y-2 transition-all duration-500 hover:shadow-lg">
-      <div className="flex items-center justify-center gap-3">
-        <div className={`p-2.5 rounded-xl ${colorClass} transition-all duration-500 group-hover:scale-110 group-hover:rotate-3`}>
-          <Icon className="h-5 w-5" />
-        </div>
-        <div className="text-left">
-          <p className="text-2xl sm:text-3xl font-bold text-foreground">{value}{suffix}</p>
-          <p className="text-sm text-muted-foreground">{label}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
+const TN_DISTRICTS = [
+  "Chennai","Coimbatore","Madurai","Salem","Trichy","Erode",
+  "Vellore","Tirunelveli","Namakkal","Kanchipuram","Dindigul",
+  "Thanjavur","Cuddalore","Villupuram","Krishnagiri"
+];
 
 export function HeroSection() {
-  const scrollY = useParallax();
+  const [search, setSearch] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [locationState, setLocationState] = useState<"idle"|"loading"|"granted"|"denied">("idle");
+  const [userLocation, setUserLocation] = useState<string>("");
+  const [showLocationBanner, setShowLocationBanner] = useState(true);
 
-  const scrollToSection = () => {
-    document.getElementById("dashboard")?.scrollIntoView({ behavior: "smooth" });
+  // Auto-request location on load
+  useEffect(() => {
+    const saved = localStorage.getItem("agriprice_location");
+    if (saved) {
+      setUserLocation(saved);
+      setLocationState("granted");
+      setShowLocationBanner(false);
+    }
+  }, []);
+
+  const requestLocation = () => {
+    setLocationState("loading");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        // Reverse geocode using nominatim
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`
+          );
+          const data = await r.json();
+          const district = data.address?.county || data.address?.state_district || data.address?.city || "Tamil Nadu";
+          const loc = district.replace(" District","").trim();
+          setUserLocation(loc);
+          localStorage.setItem("agriprice_location", loc);
+          setLocationState("granted");
+          setShowLocationBanner(false);
+        } catch {
+          setUserLocation("Tamil Nadu");
+          setLocationState("granted");
+          setShowLocationBanner(false);
+        }
+      },
+      () => {
+        setLocationState("denied");
+      }
+    );
   };
 
+  const handleSearch = (val: string) => {
+    setSearch(val);
+    if (val.length < 1) { setSuggestions([]); return; }
+    const all = [...VEGETABLES, ...TN_DISTRICTS];
+    setSuggestions(all.filter(v => v.toLowerCase().startsWith(val.toLowerCase())).slice(0, 6));
+  };
+
+  const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-16 bg-gradient-to-b from-primary/5 via-background to-background">
-      {/* Parallax background layers */}
+    <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-[#0a0f0a]">
+
+      {/* Animated background */}
       <div className="absolute inset-0 overflow-hidden">
-        <div
-          className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,hsl(var(--primary)/0.12),transparent_50%)]"
-          style={{ transform: `translateY(${scrollY * 0.15}px)` }}
-        />
-        <div
-          className="absolute inset-0 bg-[radial-gradient(circle_at_70%_80%,hsl(var(--accent)/0.1),transparent_50%)]"
-          style={{ transform: `translateY(${scrollY * 0.25}px)` }}
-        />
-        <div
-          className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,hsl(var(--secondary)/0.06),transparent_60%)]"
-          style={{ transform: `translateY(${scrollY * 0.1}px)` }}
-        />
-        {/* Moving orbs */}
-        <div
-          className="absolute w-96 h-96 rounded-full bg-primary/5 blur-3xl top-[10%] left-[5%]"
-          style={{ transform: `translate(${scrollY * 0.05}px, ${scrollY * 0.2}px)` }}
-        />
-        <div
-          className="absolute w-72 h-72 rounded-full bg-accent/8 blur-3xl top-[30%] right-[10%]"
-          style={{ transform: `translate(${scrollY * -0.08}px, ${scrollY * 0.15}px)` }}
-        />
-        <div
-          className="absolute w-64 h-64 rounded-full bg-secondary/5 blur-3xl bottom-[20%] left-[40%]"
-          style={{ transform: `translate(${scrollY * 0.03}px, ${scrollY * 0.3}px)` }}
-        />
+        <div className="absolute inset-0" style={{
+          background: "radial-gradient(ellipse 80% 60% at 50% -20%, rgba(34,197,94,0.15), transparent)",
+        }}/>
+        <div className="absolute inset-0" style={{
+          backgroundImage: "linear-gradient(rgba(34,197,94,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(34,197,94,0.03) 1px, transparent 1px)",
+          backgroundSize: "60px 60px",
+        }}/>
+        {/* Glowing orbs */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full blur-3xl opacity-10"
+          style={{background:"radial-gradient(circle, #22c55e, transparent)"}}/>
+        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 rounded-full blur-3xl opacity-10"
+          style={{background:"radial-gradient(circle, #16a34a, transparent)"}}/>
       </div>
 
-      {/* Grid pattern with parallax */}
-      <div
-        className="absolute inset-0 bg-[linear-gradient(to_right,hsl(var(--border)/0.3)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--border)/0.3)_1px,transparent_1px)] bg-[size:80px_80px] [mask-image:radial-gradient(ellipse_70%_50%_at_50%_40%,black,transparent)]"
-        style={{ transform: `translateY(${scrollY * 0.05}px)` }}
-      />
+      {/* Location permission banner */}
+      {showLocationBanner && locationState !== "denied" && (
+        <div className="absolute top-20 left-0 right-0 z-20 flex justify-center px-4">
+          <div className="flex items-center gap-3 bg-green-950/90 border border-green-500/30 rounded-2xl px-5 py-3 backdrop-blur-xl shadow-2xl max-w-lg w-full">
+            <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center shrink-0">
+              <MapPin className="w-4 h-4 text-green-400" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-green-100">Get prices near you</p>
+              <p className="text-xs text-green-400/70">Allow location for your local mandi prices</p>
+            </div>
+            <button
+              onClick={requestLocation}
+              disabled={locationState === "loading"}
+              className="shrink-0 bg-green-500 hover:bg-green-400 text-black text-xs font-bold px-4 py-1.5 rounded-xl transition-all"
+            >
+              {locationState === "loading" ? <Loader2 className="w-3 h-3 animate-spin"/> : "Allow"}
+            </button>
+            <button onClick={() => setShowLocationBanner(false)} className="text-green-500/50 hover:text-green-400">
+              <X className="w-4 h-4"/>
+            </button>
+          </div>
+        </div>
+      )}
 
-      {/* Floating particles with parallax */}
-      <div style={{ transform: `translateY(${scrollY * 0.3}px)` }}>
-        <FloatingParticle className="w-3 h-3 bg-primary top-[20%] left-[15%] animation-delay-0" />
-        <FloatingParticle className="w-2 h-2 bg-secondary top-[30%] right-[20%] animation-delay-1000" />
-      </div>
-      <div style={{ transform: `translateY(${scrollY * 0.2}px)` }}>
-        <FloatingParticle className="w-4 h-4 bg-accent top-[60%] left-[10%] animation-delay-2000" />
-        <FloatingParticle className="w-2 h-2 bg-primary top-[70%] right-[15%] animation-delay-500" />
-      </div>
-      <div style={{ transform: `translateY(${scrollY * 0.4}px)` }}>
-        <FloatingParticle className="w-3 h-3 bg-secondary top-[45%] left-[80%] animation-delay-1500" />
-        <FloatingParticle className="w-2 h-2 bg-accent top-[15%] left-[60%] animation-delay-1000" />
-      </div>
+      {/* Main content */}
+      <div className="relative z-10 text-center px-4 max-w-5xl mx-auto">
 
-      {/* Geometric decorations */}
-      <div
-        className="absolute top-[15%] right-[8%] w-20 h-20 border border-primary/10 rounded-2xl rotate-12 hidden lg:block"
-        style={{ transform: `rotate(${12 + scrollY * 0.03}deg) translateY(${scrollY * 0.1}px)` }}
-      />
-      <div
-        className="absolute bottom-[25%] left-[5%] w-16 h-16 border border-accent/15 rounded-full hidden lg:block"
-        style={{ transform: `translateY(${scrollY * 0.2}px) scale(${1 + scrollY * 0.0003})` }}
-      />
+        {/* Badge */}
+        <div className="inline-flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-full px-4 py-1.5 mb-8">
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"/>
+          <span className="text-green-400 text-sm font-medium tracking-wide">Live Market Intelligence</span>
+        </div>
 
-      <div
-        className="container relative z-10 px-4 py-16"
-        style={{ transform: `translateY(${scrollY * -0.1}px)`, opacity: Math.max(0, 1 - scrollY * 0.001) }}
-      >
-        <div className="max-w-5xl mx-auto text-center">
-          {/* Badge */}
-          <div className="badge-primary mb-8 animate-fade-in backdrop-blur-sm">
-            <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-            <Sparkles className="h-4 w-4" />
-            <span>AI-Powered Agricultural Analytics</span>
+        {/* Heading */}
+        <h1 className="text-5xl sm:text-7xl lg:text-8xl font-black text-white mb-6 leading-none tracking-tight">
+          Know Your
+          <br/>
+          <span className="text-transparent bg-clip-text"
+            style={{backgroundImage:"linear-gradient(135deg, #22c55e, #86efac, #4ade80)"}}>
+            Crop Price
+          </span>
+          <br/>
+          <span className="text-white/40 text-3xl sm:text-4xl font-normal">before you sell</span>
+        </h1>
+
+        <p className="text-white/50 text-lg sm:text-xl max-w-2xl mx-auto mb-12 leading-relaxed">
+          Real-time vegetable prices from Tamil Nadu mandis.
+          AI-powered 10-day predictions. Always free for farmers.
+        </p>
+
+        {/* Search bar */}
+        <div className="relative max-w-xl mx-auto mb-10">
+          <div className="flex items-center bg-white/5 border border-white/10 rounded-2xl px-5 py-4 gap-3 focus-within:border-green-500/50 focus-within:bg-white/8 transition-all">
+            <Search className="w-5 h-5 text-white/30 shrink-0"/>
+            <input
+              type="text"
+              value={search}
+              onChange={e => handleSearch(e.target.value)}
+              placeholder="Search vegetable or district..."
+              className="flex-1 bg-transparent text-white placeholder-white/30 text-base outline-none"
+            />
+            {userLocation && (
+              <div className="flex items-center gap-1 shrink-0 bg-green-500/15 border border-green-500/20 rounded-lg px-2 py-1">
+                <MapPin className="w-3 h-3 text-green-400"/>
+                <span className="text-green-400 text-xs font-medium">{userLocation}</span>
+              </div>
+            )}
+            {!userLocation && (
+              <button onClick={requestLocation} className="shrink-0 text-white/30 hover:text-green-400 transition-colors">
+                <MapPin className="w-5 h-5"/>
+              </button>
+            )}
           </div>
 
-          {/* Main Heading */}
-          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl xl:text-8xl font-bold leading-[1.1] mb-6 animate-slide-up tracking-tight">
-            Smart Price{" "}
-            <span className="text-gradient-primary relative">
-              Predictions
-              <svg className="absolute -bottom-2 left-0 w-full h-3 text-primary/30" viewBox="0 0 200 8" preserveAspectRatio="none">
-                <path d="M0 7 Q50 0 100 4 Q150 8 200 1" stroke="currentColor" strokeWidth="2" fill="none" />
-              </svg>
-            </span>
-            <br />
-            for <span className="text-gradient-secondary">Indian Farmers</span>
-          </h1>
+          {/* Suggestions dropdown */}
+          {suggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-2 bg-[#111] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-50">
+              {suggestions.map(s => (
+                <button key={s}
+                  onClick={() => {
+                    setSearch(s);
+                    setSuggestions([]);
+                    scrollTo(VEGETABLES.includes(s) ? "dashboard" : "nearby-mandis");
+                  }}
+                  className="w-full text-left px-5 py-3 text-white/70 hover:bg-green-500/10 hover:text-green-400 transition-colors flex items-center gap-3 text-sm"
+                >
+                  <span>{VEGETABLES.includes(s) ? "🥬" : "📍"}</span>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
-          {/* Subheading */}
-          <p className="text-lg sm:text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto mb-12 animate-slide-up leading-relaxed" style={{ animationDelay: "0.1s" }}>
-            Make informed decisions with advanced price forecasting.
-            Track real-time mandi prices, get accurate predictions, and maximize your profits.
-          </p>
+        {/* CTA buttons */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+          <button
+            onClick={() => scrollTo("dashboard")}
+            className="group flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-bold px-8 py-4 rounded-2xl text-base transition-all hover:scale-105 hover:shadow-[0_0_40px_rgba(34,197,94,0.4)] active:scale-95"
+          >
+            View Live Prices
+            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform"/>
+          </button>
+          <button
+            onClick={() => scrollTo("predictions")}
+            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium px-8 py-4 rounded-2xl text-base transition-all"
+          >
+            <TrendingUp className="w-5 h-5 text-green-400"/>
+            10-Day Forecast
+          </button>
+        </div>
 
-          {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-20 animate-slide-up" style={{ animationDelay: "0.2s" }}>
-            <Button size="lg" className="btn-primary group px-10 py-6 text-base rounded-xl shadow-lg hover:shadow-xl relative overflow-hidden" onClick={scrollToSection}>
-              <span className="relative z-10 flex items-center">
-                View Live Prices
-                <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-              </span>
-              <div className="absolute inset-0 bg-gradient-to-r from-primary to-primary/80 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-            </Button>
-            <Button variant="outline" size="lg" className="btn-outline px-10 py-6 text-base rounded-xl group" asChild>
-              <a href="#predictions">
-                See Predictions
-                <TrendingUp className="ml-2 h-4 w-4 group-hover:translate-y-[-2px] transition-transform" />
-              </a>
-            </Button>
-          </div>
-
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 max-w-3xl mx-auto animate-slide-up" style={{ animationDelay: "0.3s" }}>
-            <CountUpStat value="95%" suffix="+" label="Prediction Accuracy" icon={TrendingUp} colorClass="bg-primary/10 text-primary" />
-            <CountUpStat value="50" suffix="+" label="Mandis Covered" icon={BarChart3} colorClass="bg-secondary/10 text-secondary" />
-            <CountUpStat value="Real-time" label="Market Updates" icon={Shield} colorClass="bg-accent/20 text-accent-foreground" />
-          </div>
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-4 max-w-2xl mx-auto">
+          {[
+            { value: "1,400+", label: "Daily Records" },
+            { value: "40+", label: "TN Markets" },
+            { value: "15", label: "Vegetables" },
+          ].map(stat => (
+            <div key={stat.label} className="bg-white/3 border border-white/8 rounded-2xl p-5">
+              <p className="text-2xl sm:text-3xl font-black text-white mb-1">{stat.value}</p>
+              <p className="text-white/40 text-sm">{stat.label}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Scroll indicator */}
-      <button
-        onClick={scrollToSection}
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-muted-foreground hover:text-primary transition-colors animate-bounce-gentle"
-        style={{ opacity: Math.max(0, 1 - scrollY * 0.005) }}
-      >
-        <span className="text-xs font-medium">Scroll Down</span>
-        <ChevronDown className="h-5 w-5" />
-      </button>
+      {/* Scroll hint */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 animate-bounce">
+        <div className="w-px h-12 bg-gradient-to-b from-transparent to-green-500/40"/>
+        <div className="w-1.5 h-1.5 rounded-full bg-green-500/40"/>
+      </div>
     </section>
   );
 }
