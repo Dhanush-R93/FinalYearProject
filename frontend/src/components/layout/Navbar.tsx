@@ -1,96 +1,145 @@
-import { useState, useEffect } from "react";
-import { Menu, X, Leaf } from "lucide-react";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Leaf, Menu, X, BarChart3, MessageSquare, ShoppingBag, Bell, LogOut, TrendingUp, Cloud, Newspaper, Brain, LayoutDashboard } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import { useUserRole } from "@/hooks/useUserRole";
 
-const NAV_LINKS = [
-  { label: "Prices", href: "#dashboard" },
-  { label: "Predictions", href: "#predictions" },
-  { label: "Model", href: "#model" },
-  { label: "Weather", href: "#weather" },
-  { label: "News", href: "#news" },
-  { label: "AI Chat", href: "#ai-chat" },
+const navLinks = [
+  { label: "Prices", href: "#dashboard", icon: BarChart3 },
+  { label: "Predictions", href: "#predictions", icon: TrendingUp },
+  { label: "Model", href: "#model-training", icon: Brain },
+  { label: "Weather", href: "#weather", icon: Cloud },
+  { label: "News", href: "#news", icon: Newspaper },
+  { label: "Marketplace", href: "#marketplace", icon: ShoppingBag },
+  { label: "AI Chat", href: "#chatbot", icon: MessageSquare },
 ];
 
 export function Navbar() {
-  const [scrolled, setScrolled] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const { user, signOut } = useAuth();
+  const { isAdmin } = useUserRole();
 
-  useEffect(() => {
-    const fn = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", fn);
-    return () => window.removeEventListener("scroll", fn);
-  }, []);
+  const handleSignOut = async () => {
+    await signOut();
+    setIsOpen(false);
+  };
 
   return (
-    <nav className={cn(
-      "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
-      scrolled
-        ? "bg-[#0a0f0a]/90 backdrop-blur-xl border-b border-[rgba(255,255,255,0.05)] shadow-[0_4px_30px_rgba(0,0,0,0.5)]"
-        : "bg-transparent"
-    )}>
-      <div className="container px-4 max-w-7xl mx-auto">
-        <div className="flex items-center justify-between h-16">
-
+    <header className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-sm border-b border-border">
+      <div className="container mx-auto px-4">
+        <div className="flex h-16 items-center justify-between">
           {/* Logo */}
-          <a href="/" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-xl bg-green-500/20 border border-green-500/30 flex items-center justify-center group-hover:bg-green-500/30 transition-all">
-              <Leaf className="w-4 h-4 text-green-400"/>
+          <a href="#" className="flex items-center gap-2.5 group">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-transform group-hover:scale-105">
+              <Leaf className="h-5 w-5" />
             </div>
-            <div>
-              <span className="text-white font-black text-lg leading-none">AgriPrice</span>
-              <p className="text-green-500/60 text-[10px] leading-none font-medium">Smart Farming</p>
+            <div className="hidden sm:block">
+              <span className="font-bold text-lg text-foreground">AgriPrice</span>
+              <p className="text-xs text-muted-foreground -mt-0.5">Smart Farming</p>
             </div>
           </a>
 
-          {/* Desktop nav */}
-          <div className="hidden md:flex items-center gap-1">
-            {NAV_LINKS.map(link => (
-              <a key={link.label} href={link.href}
-                className="text-white/50 hover:text-green-400 text-sm font-medium px-4 py-2 rounded-xl hover:bg-[rgba(255,255,255,0.05)] transition-all"
+          {/* Desktop Navigation */}
+          <nav className="hidden lg:flex items-center gap-1">
+            {navLinks.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
               >
+                <link.icon className="h-4 w-4" />
                 {link.label}
               </a>
             ))}
-          </div>
+          </nav>
 
           {/* Right side */}
           <div className="hidden md:flex items-center gap-3">
-            <a href="#auth" className="text-white/50 hover:text-white text-sm font-medium px-4 py-2 transition-all">
-              Sign In
-            </a>
-            <a href="#auth"
-              className="bg-green-500 hover:bg-green-400 text-black text-sm font-bold px-5 py-2 rounded-xl transition-all hover:shadow-[0_0_20px_rgba(34,197,94,0.3)]"
-            >
-              Get Started
-            </a>
+            {user ? (
+              <>
+                {isAdmin && (
+                  <a href="/admin" className="p-2 rounded-lg hover:bg-muted transition-colors" title="Admin Dashboard">
+                    <LayoutDashboard className="h-5 w-5 text-muted-foreground" />
+                  </a>
+                )}
+                <a href="#alerts" className="p-2 rounded-lg hover:bg-muted transition-colors">
+                  <Bell className="h-5 w-5 text-muted-foreground" />
+                </a>
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted">
+                  <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center">
+                    <span className="text-xs font-medium text-primary">
+                      {user.email?.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="text-sm font-medium text-foreground">
+                    {user.email?.split("@")[0]}
+                  </span>
+                </div>
+                <Button variant="ghost" size="sm" onClick={handleSignOut}>
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" asChild>
+                  <a href="/auth">Sign In</a>
+                </Button>
+                <Button size="sm" className="btn-primary" asChild>
+                  <a href="/auth">Get Started</a>
+                </Button>
+              </>
+            )}
           </div>
 
-          {/* Mobile menu button */}
-          <button onClick={() => setOpen(!open)}
-            className="md:hidden text-white/60 hover:text-white p-2"
+          {/* Mobile Menu Button */}
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="lg:hidden p-2 rounded-lg hover:bg-muted transition-colors"
           >
-            {open ? <X className="w-5 h-5"/> : <Menu className="w-5 h-5"/>}
+            {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
 
-        {/* Mobile menu */}
-        {open && (
-          <div className="md:hidden border-t border-[rgba(255,255,255,0.05)] py-4 space-y-1">
-            {NAV_LINKS.map(link => (
-              <a key={link.label} href={link.href}
-                onClick={() => setOpen(false)}
-                className="block text-white/60 hover:text-green-400 text-sm font-medium px-4 py-3 rounded-xl hover:bg-[rgba(255,255,255,0.05)] transition-all"
+        {/* Mobile Menu */}
+        <div
+          className={cn(
+            "lg:hidden overflow-hidden transition-all duration-300",
+            isOpen ? "max-h-[400px] pb-4" : "max-h-0"
+          )}
+        >
+          <nav className="flex flex-col gap-1 pt-2">
+            {navLinks.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
+                onClick={() => setIsOpen(false)}
               >
+                <link.icon className="h-4 w-4" />
                 {link.label}
               </a>
             ))}
-            <div className="pt-2 flex gap-2 px-4">
-              <a href="#auth" className="flex-1 text-center text-white/60 text-sm font-medium py-2.5 rounded-xl border border-white/10">Sign In</a>
-              <a href="#auth" className="flex-1 text-center bg-green-500 text-black text-sm font-bold py-2.5 rounded-xl">Get Started</a>
+            <div className="flex gap-2 mt-3 pt-3 border-t border-border">
+              {user ? (
+                <Button variant="ghost" size="sm" className="flex-1" onClick={handleSignOut}>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign Out
+                </Button>
+              ) : (
+                <>
+                  <Button variant="ghost" size="sm" className="flex-1" asChild>
+                    <a href="/auth">Sign In</a>
+                  </Button>
+                  <Button size="sm" className="flex-1 btn-primary" asChild>
+                    <a href="/auth">Get Started</a>
+                  </Button>
+                </>
+              )}
             </div>
-          </div>
-        )}
+          </nav>
+        </div>
       </div>
-    </nav>
+    </header>
   );
 }

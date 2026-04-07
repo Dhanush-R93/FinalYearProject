@@ -6,9 +6,7 @@ export function useCommodities() {
     queryKey: ["commodities"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("commodities")
-        .select("*")
-        .order("name");
+        .from("commodities").select("*").order("name");
       if (error) throw error;
       return data;
     },
@@ -55,56 +53,60 @@ export function useLatestPrices(location?: string) {
   return useQuery({
     queryKey: ["latest_prices", location],
     queryFn: async () => {
-      // Get latest price per commodity — prefer location-specific mandi
+      // Fetch all recent price data
       const { data, error } = await supabase
         .from("price_data")
         .select(`*, commodities(id, name, icon, unit, category)`)
         .in("source", ["agmarknet_gov_in", "interpolated", "simulated"])
-        .order("recorded_at", { ascending: false });
+        .order("recorded_at", { ascending: false })
+        .limit(2000);
 
       if (error) throw error;
       if (!data) return [];
 
-      // Group by commodity, pick best price for location
+      // Group by commodity — prefer location match, then real data, then latest
       const map = new Map<string, any>();
       for (const row of data) {
         const cname = row.commodities?.name;
-        if (!cname) continue;
+        if (!cname || !row.price) continue;
 
         const existing = map.get(cname);
-        const isLocationMatch = location &&
-          (row.mandi_location?.toLowerCase().includes(location.toLowerCase()) ||
-           row.mandi_name?.toLowerCase().includes(location.toLowerCase()));
+        const isLocMatch = location && (
+          row.mandi_location?.toLowerCase().includes(location.toLowerCase()) ||
+          row.mandi_name?.toLowerCase().includes(location.toLowerCase())
+        );
+        const isReal = row.source === "agmarknet_gov_in";
 
         if (!existing) {
-          map.set(cname, row);
-        } else if (isLocationMatch && existing.source !== "agmarknet_gov_in") {
-          map.set(cname, row); // prefer location match
-        } else if (row.source === "agmarknet_gov_in" && existing.source !== "agmarknet_gov_in") {
-          if (!isLocationMatch) map.set(cname, row); // prefer real data
+          map.set(cname, { ...row, _locMatch: isLocMatch });
+        } else {
+          // Prefer: location match > real data > latest date
+          const existLocMatch = existing._locMatch;
+          if (isLocMatch && !existLocMatch) {
+            map.set(cname, { ...row, _locMatch: true });
+          } else if (!existLocMatch && isReal && existing.source !== "agmarknet_gov_in") {
+            map.set(cname, { ...row, _locMatch: false });
+          }
         }
       }
 
-      // Calculate price change vs previous day
-      const today = new Date().toISOString().split("T")[0];
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
-
+      // Calculate day-over-day change
       const prevMap = new Map<string, number>();
+      const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
       for (const row of data) {
         const cname = row.commodities?.name;
         if (!cname) continue;
         const d = row.recorded_at?.toString().split("T")[0];
-        if (d === yesterday && !prevMap.has(cname)) {
+        if (d <= yesterday && !prevMap.has(cname)) {
           prevMap.set(cname, Number(row.price));
         }
       }
 
       return Array.from(map.values()).map((row: any) => {
         const price = Number(row.price) || 0;
-        const prevPrice = prevMap.get(row.commodities?.name) || price;
-        const change = price - prevPrice;
-        const changePercent = prevPrice > 0 ? (change / prevPrice) * 100 : 0;
-
+        const prev = prevMap.get(row.commodities?.name) || price;
+        const change = price - prev;
+        const changePercent = prev > 0 ? (change / prev) * 100 : 0;
         return {
           id: row.commodities?.id,
           name: row.commodities?.name,
@@ -119,29 +121,9 @@ export function useLatestPrices(location?: string) {
           recordedAt: row.recorded_at ?? null,
           source: row.source ?? null,
         };
-      }).filter(r => r.name).sort((a, b) => a.name.localeCompare(b.name));
+      }).filter(r => r.name).sort((a,b) => a.name.localeCompare(b.name));
     },
     refetchInterval: 5 * 60 * 1000,
     staleTime: 2 * 60 * 1000,
-  });
-}
-
-// Get prices for a specific location/district
-export function useLocationPrices(district: string) {
-  return useQuery({
-    queryKey: ["location_prices", district],
-    queryFn: async () => {
-      if (!district) return [];
-      const { data, error } = await supabase
-        .from("price_data")
-        .select(`*, commodities(name, icon)`)
-        .ilike("mandi_location", `%${district}%`)
-        .eq("source", "agmarknet_gov_in")
-        .order("recorded_at", { ascending: false })
-        .limit(200);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!district,
   });
 }
