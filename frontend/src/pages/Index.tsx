@@ -5,7 +5,6 @@ import { PriceDashboard } from "@/components/sections/PriceDashboard";
 import { NearbyMandis } from "@/components/sections/NearbyMandis";
 import { PredictionChart } from "@/components/sections/PredictionChart";
 import { HistoricalPriceChart } from "@/components/sections/HistoricalPriceChart";
-import { ModelTrainingPanel } from "@/components/sections/ModelTrainingPanel";
 import { WeatherSection } from "@/components/sections/WeatherSection";
 import { MarketNewsSection } from "@/components/sections/MarketNewsSection";
 import { PriceComparisonSection } from "@/components/sections/PriceComparisonSection";
@@ -42,7 +41,6 @@ const Index = () => {
         <PredictionChart />
         <HistoricalPriceChart />
         <SectionDivider />
-        <ModelTrainingPanel />
         <WeatherSection />
         <SectionDivider />
         <MarketNewsSection />
