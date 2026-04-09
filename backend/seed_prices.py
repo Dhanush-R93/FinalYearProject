@@ -20,7 +20,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 API_KEY   = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
 URL       = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
 KEEP_DAYS = 30
-EXPECTED_RECORDS_PER_DAY = 50   # if DB has >= this, skip that date
+EXPECTED_RECORDS_PER_DAY = 100   # if DB has >= this, skip that date
 
 COMMODITY_MAP = {
     "Tomato":       ["Tomato"],
@@ -67,18 +67,31 @@ def get_db_record_count(target_date: str) -> int:
 
 # ── Step 2: Fetch from API ──────────────────────────────────
 async def fetch_day(client: httpx.AsyncClient, target_date: date, attempt: int = 1) -> list:
-    """Fetch all TN records for one day with retry"""
+    """Fetch ALL TN records for one day — handles multiple pages"""
+    date_str = target_date.strftime("%d/%m/%Y")
+    all_tn = []
+    offset = 0
+
     try:
-        r = await client.get(URL, params={
-            "api-key": API_KEY,
-            "format":  "json",
-            "limit":   1000,
-            "filters[arrival_date]": target_date.strftime("%d/%m/%Y"),
-        })
-        r.raise_for_status()
-        all_records = r.json().get("records", [])
-        tn = [rec for rec in all_records if "Tamil" in str(rec.get("state",""))]
-        return tn
+        while True:
+            r = await client.get(URL, params={
+                "api-key": API_KEY,
+                "format":  "json",
+                "limit":   1000,
+                "offset":  offset,
+                "filters[arrival_date]": date_str,
+            })
+            r.raise_for_status()
+            data      = r.json()
+            records   = data.get("records", [])
+            total     = int(data.get("total", 0))
+            tn        = [rec for rec in records if "Tamil" in str(rec.get("state",""))]
+            all_tn.extend(tn)
+            offset   += len(records)
+            if offset >= total or len(records) == 0:
+                break
+            await asyncio.sleep(0.5)
+        return all_tn
 
     except httpx.HTTPStatusError as e:
         code = e.response.status_code
@@ -95,6 +108,7 @@ async def fetch_day(client: httpx.AsyncClient, target_date: date, attempt: int =
             await asyncio.sleep(attempt * 3)
             return await fetch_day(client, target_date, attempt + 1)
         return []
+
 
 # ── Step 3: Build DB rows ───────────────────────────────────
 def build_rows(records: list, commodity_ids: dict, fallback_date: date) -> list:
