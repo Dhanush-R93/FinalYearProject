@@ -64,7 +64,7 @@ export function PredictionChart() {
 
     // 10 days of future predictions
     const futurePreds = (predictions || [])
-      .filter(p => new Date(p.prediction_date) > today)
+      .filter(p => p.prediction_date > today.toISOString().split('T')[0])
       .sort((a, b) => new Date(a.prediction_date).getTime() - new Date(b.prediction_date).getTime())
       .slice(0, 10);
 
@@ -87,7 +87,7 @@ export function PredictionChart() {
   const latestActual = priceData?.find(p => p.mandi_name === "Koyambedu") || priceData?.[0];
   const day1Prediction = predictions?.find(p => new Date(p.prediction_date) > today);
   const day10Prediction = predictions
-    ?.filter(p => new Date(p.prediction_date) > today)
+    ?.filter(p => p.prediction_date > today.toISOString().split('T')[0])
     .sort((a, b) => new Date(a.prediction_date).getTime() - new Date(b.prediction_date).getTime())[9];
 
   const priceDiff = day1Prediction && latestActual
@@ -354,7 +354,7 @@ export function PredictionChart() {
               </div>
 
               {/* 10-day prediction table */}
-              {predictions && predictions.filter(p => new Date(p.prediction_date) > today).length > 0 && (
+              {predictions && predictions.filter(p => p.prediction_date > today.toISOString().split('T')[0]).length > 0 && (
                 <div className="card-elevated p-6">
                   <h4 className="font-semibold mb-4 flex items-center gap-2">
                     <Calendar className="h-4 w-4 text-primary" />
@@ -374,7 +374,7 @@ export function PredictionChart() {
                       </thead>
                       <tbody>
                         {predictions
-                          .filter(p => new Date(p.prediction_date) > today)
+                          .filter(p => p.prediction_date > today.toISOString().split('T')[0])
                           .sort((a, b) => new Date(a.prediction_date).getTime() - new Date(b.prediction_date).getTime())
                           .slice(0, 10)
                           .map((p, i) => {

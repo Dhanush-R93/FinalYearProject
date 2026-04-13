@@ -4,6 +4,7 @@ import { HeroSection } from "@/components/sections/HeroSection";
 import { PriceDashboard } from "@/components/sections/PriceDashboard";
 import { NearbyMandis } from "@/components/sections/NearbyMandis";
 import { PredictionChart } from "@/components/sections/PredictionChart";
+import { MandiPriceForecast } from "@/components/sections/MandiPriceForecast";
 import { HistoricalPriceChart } from "@/components/sections/HistoricalPriceChart";
 import { WeatherSection } from "@/components/sections/WeatherSection";
 import { MarketNewsSection } from "@/components/sections/MarketNewsSection";
@@ -39,6 +40,7 @@ const Index = () => {
         <NearbyMandis />
         <SectionDivider />
         <PredictionChart />
+        <MandiPriceForecast />
         <HistoricalPriceChart />
         <SectionDivider />
         <WeatherSection />
