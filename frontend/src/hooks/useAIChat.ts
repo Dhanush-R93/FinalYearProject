@@ -107,7 +107,7 @@ export function useAIChat() {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) updateAssistant(content);
-          } catch (_e) {}
+          } catch (_ignore) { /* skip */ }
         }
       }
     } catch (e) {
@@ -180,7 +180,7 @@ export function useAIChat() {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) updateAssistant(content);
-          } catch (_e) {}
+          } catch (_ignore) { /* skip */ }
         }
       }
     } catch (e) {
