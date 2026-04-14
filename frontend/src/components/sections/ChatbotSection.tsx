@@ -1,33 +1,69 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Send, Bot, User, Loader2, MessageSquare, RefreshCw, Sparkles, Mic } from "lucide-react";
+import { Send, Bot, User, Loader2, RefreshCw, Sparkles, Mic, MicOff, X, TrendingUp, CloudRain, ShoppingCart, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAIChat } from "@/hooks/useAIChat";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
-import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
+import { toast } from "sonner";
 
-const quickPrompts = [
-  { text: "What's the price of tomatoes?", emoji: "🍅" },
-  { text: "Predict onion prices for next week", emoji: "📈" },
-  { text: "Best time to sell potatoes?", emoji: "🥔" },
-  { text: "Compare prices across mandis", emoji: "🏪" },
-  { text: "Storage tips for vegetables", emoji: "❄️" },
-  { text: "Give me market insights", emoji: "💡" },
+const QUICK_PROMPTS = [
+  { text: "What are today's tomato prices?", emoji: "🍅", icon: TrendingUp },
+  { text: "Predict onion prices for next week", emoji: "📈", icon: TrendingUp },
+  { text: "Will rain affect vegetable prices?", emoji: "🌧️", icon: CloudRain },
+  { text: "Best vegetables to sell this week?", emoji: "💡", icon: Sparkles },
+  { text: "Compare Salem vs Coimbatore prices", emoji: "🏪", icon: ShoppingCart },
+  { text: "Storage tips for tomatoes", emoji: "❄️", icon: Package },
 ];
 
 function TypingIndicator() {
   return (
-    <div className="flex gap-3">
-      <div className="flex-shrink-0 p-2 h-8 w-8 rounded-lg bg-primary text-primary-foreground">
-        <Bot className="h-4 w-4" />
+    <div className="flex gap-3 items-start">
+      <div className="flex-shrink-0 w-8 h-8 rounded-xl bg-primary flex items-center justify-center shadow-sm">
+        <Bot className="h-4 w-4 text-primary-foreground" />
       </div>
-      <div className="bg-muted rounded-xl px-4 py-3">
+      <div className="bg-muted rounded-2xl rounded-tl-none px-4 py-3">
         <div className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
-          <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:150ms]" />
-          <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]" />
+          {[0, 150, 300].map(delay => (
+            <span key={delay} className="h-2 w-2 rounded-full bg-primary/50 animate-bounce"
+              style={{ animationDelay: `${delay}ms` }} />
+          ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({ message, isLast }: { message: { role: string; content: string }; isLast: boolean }) {
+  const isUser = message.role === "user";
+  return (
+    <div className={cn("flex gap-3 items-start", isUser && "flex-row-reverse")}>
+      {/* Avatar */}
+      <div className={cn(
+        "flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center shadow-sm",
+        isUser ? "bg-secondary" : "bg-primary"
+      )}>
+        {isUser
+          ? <User className="h-4 w-4 text-secondary-foreground" />
+          : <Bot className="h-4 w-4 text-primary-foreground" />}
+      </div>
+
+      {/* Bubble */}
+      <div className={cn(
+        "max-w-[80%] px-4 py-3 text-sm leading-relaxed shadow-sm",
+        isUser
+          ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-none"
+          : "bg-muted text-foreground rounded-2xl rounded-tl-none"
+      )}>
+        {isUser ? (
+          <p>{message.content}</p>
+        ) : (
+          <div className="prose prose-sm dark:prose-invert max-w-none
+            prose-p:my-1 prose-ul:my-1 prose-li:my-0.5
+            prose-strong:font-semibold prose-code:text-xs
+            prose-headings:text-sm prose-headings:font-bold prose-headings:my-1">
+            <ReactMarkdown>{message.content || "▊"}</ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -38,54 +74,44 @@ export function ChatbotSection() {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showQuickPrompts, setShowQuickPrompts] = useState(true);
 
   const handleVoiceResult = useCallback((text: string) => {
     setInputValue(text);
-    toast.success("Voice captured! Tap send or keep editing.");
+    toast.success("Voice captured!");
   }, []);
 
-  const { isListening, isSupported: micSupported, startListening, stopListening } = useSpeechRecognition(handleVoiceResult);
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const { isListening, isSupported: micSupported, startListening, stopListening } =
+    useSpeechRecognition(handleVoiceResult);
 
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  useEffect(() => {
-    if (error) {
-      toast.error(error);
-    }
-  }, [error]);
-
-  // Auto-resize textarea
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + "px";
-    }
-  }, [inputValue]);
-
-  const handleSend = async (text?: string) => {
-    const messageText = text || inputValue;
-    if (!messageText.trim() || isLoading) return;
-
+  const handleSend = async () => {
+    const text = inputValue.trim();
+    if (!text || isLoading) return;
     setInputValue("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
-    await sendMessage(messageText);
+    setShowQuickPrompts(false);
+    await sendMessage(text);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
+
+  const handleQuickPrompt = (text: string) => {
+    setShowQuickPrompts(false);
+    sendMessage(text);
+  };
+
+  const hasMessages = messages.length > 0;
 
   return (
-    <section id="chatbot" className="py-16 bg-muted/30">
+    <section id="ai-chat" className="py-16">
       <div className="container px-4">
+
+        {/* Header */}
         <div className="section-header">
           <div className="badge-primary mb-4">
             <Sparkles className="h-4 w-4" />
@@ -93,180 +119,132 @@ export function ChatbotSection() {
           </div>
           <h2 className="section-title">AgriPrice AI Chat</h2>
           <p className="section-description">
-            Get instant answers about market prices, predictions, and farming advice
+            Ask about live vegetable prices, predictions, weather impact, and market tips
           </p>
         </div>
 
+        {/* Chat container */}
         <div className="max-w-3xl mx-auto">
-          <div className="card-elevated overflow-hidden">
-            {/* Chat Header */}
-            <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted/30">
+          <div className="card-elevated rounded-3xl overflow-hidden flex flex-col" style={{ height: "600px" }}>
+
+            {/* Chat header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-muted/30">
               <div className="flex items-center gap-3">
-                <div className="relative p-2 rounded-lg bg-primary text-primary-foreground">
-                  <Bot className="h-5 w-5" />
-                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-price-up border-2 border-background" />
+                <div className="relative">
+                  <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-sm">
+                    <Bot className="h-5 w-5 text-primary-foreground" />
+                  </div>
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-500 border-2 border-background"/>
                 </div>
                 <div>
-                  <h3 className="font-semibold text-foreground">AgriPrice AI</h3>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {isLoading ? (
-                        <span className="text-price-up font-medium">Typing...</span>
-                      ) : (
-                        "Online • Powered by Claude"
-                      )}
-                    </span>
-                  </div>
+                  <p className="font-bold text-foreground text-sm">AgriPrice AI</p>
+                  <p className="text-xs text-green-500 font-medium">● Online · Real-time market data</p>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                {messages.length > 0 && (
-                  <span className="text-[10px] text-muted-foreground mr-2">
-                    {messages.filter(m => m.role === "user").length} messages
-                  </span>
-                )}
-                <Button variant="ghost" size="sm" onClick={clearMessages} className="text-muted-foreground hover:text-foreground">
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-              </div>
+              {hasMessages && (
+                <button onClick={() => { clearMessages(); setShowQuickPrompts(true); }}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border hover:border-primary/30 px-3 py-1.5 rounded-xl transition-all">
+                  <RefreshCw className="h-3 w-3" />
+                  New chat
+                </button>
+              )}
             </div>
 
-            {/* Messages */}
-            <div className="h-[28rem] overflow-y-auto p-6 space-y-4 scroll-smooth">
-              {messages.length === 0 && (
-                <div className="text-center py-6">
-                  <div className="relative w-16 h-16 mx-auto mb-4">
-                    <div className="absolute inset-0 bg-primary/10 rounded-2xl rotate-6" />
-                    <div className="absolute inset-0 bg-primary/5 rounded-2xl -rotate-3" />
-                    <div className="relative flex items-center justify-center w-full h-full bg-muted rounded-2xl">
-                      <MessageSquare className="h-8 w-8 text-primary" />
-                    </div>
+            {/* Messages area */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {!hasMessages && (
+                <div className="flex flex-col items-center justify-center h-full text-center gap-4">
+                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                    <Bot className="h-8 w-8 text-primary" />
                   </div>
-                  <p className="text-foreground font-medium mb-1">How can I help you today?</p>
-                  <p className="text-sm text-muted-foreground mb-6">
-                    Ask about prices, predictions, storage tips, and more
-                  </p>
-                  
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-w-lg mx-auto">
-                    {quickPrompts.map((prompt) => (
-                      <button
-                        key={prompt.text}
-                        onClick={() => handleSend(prompt.text)}
-                        disabled={isLoading}
-                        className="text-left p-3 rounded-xl bg-background border border-border hover:border-primary/30 hover:bg-primary/5 text-sm text-foreground transition-all disabled:opacity-50 group"
-                      >
-                        <span className="text-lg mb-1 block">{prompt.emoji}</span>
-                        <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors line-clamp-2">
-                          {prompt.text}
-                        </span>
-                      </button>
-                    ))}
+                  <div>
+                    <p className="font-bold text-foreground text-lg mb-1">Hello! I'm AgriPrice AI 👋</p>
+                    <p className="text-muted-foreground text-sm max-w-sm">
+                      Ask me about vegetable prices, market predictions, weather impact, or trading tips.
+                    </p>
                   </div>
                 </div>
               )}
 
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={cn(
-                    "flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300",
-                    message.role === "user" ? "flex-row-reverse" : ""
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "flex-shrink-0 p-2 h-8 w-8 rounded-lg",
-                      message.role === "user"
-                        ? "bg-secondary text-secondary-foreground"
-                        : "bg-primary text-primary-foreground"
-                    )}
-                  >
-                    {message.role === "user" ? (
-                      <User className="h-4 w-4" />
-                    ) : (
-                      <Bot className="h-4 w-4" />
-                    )}
-                  </div>
-                  <div
-                    className={cn(
-                      "max-w-[80%] rounded-xl px-4 py-3 text-sm",
-                      message.role === "user"
-                        ? "bg-primary text-primary-foreground rounded-br-sm"
-                        : "bg-muted text-foreground rounded-bl-sm"
-                    )}
-                  >
-                    {message.role === "assistant" ? (
-                      <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-table:text-xs">
-                        <ReactMarkdown>{message.content}</ReactMarkdown>
-                      </div>
-                    ) : (
-                      message.content
-                    )}
-                  </div>
-                </div>
+              {messages.map((msg, i) => (
+                <MessageBubble key={i} message={msg} isLast={i === messages.length - 1} />
               ))}
 
-              {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
-                <TypingIndicator />
+              {isLoading && messages[messages.length - 1]?.role !== "assistant" && <TypingIndicator />}
+
+              {error && (
+                <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/20 rounded-2xl px-4 py-3">
+                  <X className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-destructive">Error</p>
+                    <p className="text-xs text-destructive/80 mt-0.5">{error}</p>
+                  </div>
+                </div>
               )}
+
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick follow-ups after response */}
-            {messages.length > 0 && !isLoading && messages[messages.length - 1]?.role === "assistant" && (
-              <div className="px-6 pb-2 flex gap-2 overflow-x-auto scrollbar-none">
-                {["Tell me more", "Compare mandis", "Price trends"].map((followUp) => (
-                  <button
-                    key={followUp}
-                    onClick={() => handleSend(followUp)}
-                    className="whitespace-nowrap text-xs px-3 py-1.5 rounded-full border border-border hover:border-primary/30 hover:bg-primary/5 text-muted-foreground hover:text-foreground transition-all"
-                  >
-                    {followUp}
-                  </button>
-                ))}
+            {/* Quick prompts */}
+            {showQuickPrompts && !hasMessages && (
+              <div className="px-5 pb-3">
+                <p className="text-xs text-muted-foreground mb-2 font-medium">Quick questions:</p>
+                <div className="flex flex-wrap gap-2">
+                  {QUICK_PROMPTS.map(p => (
+                    <button key={p.text} onClick={() => handleQuickPrompt(p.text)}
+                      className="flex items-center gap-1.5 text-xs bg-muted hover:bg-primary/10 hover:text-primary border border-border hover:border-primary/30 px-3 py-2 rounded-xl transition-all font-medium text-muted-foreground">
+                      <span>{p.emoji}</span>
+                      <span className="max-w-[160px] truncate">{p.text}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
-            {/* Input */}
-            <div className="p-4 border-t border-border bg-background">
-              <div className="flex gap-3 items-end">
-                {micSupported && (
-                  <Button
-                    type="button"
-                    variant={isListening ? "destructive" : "outline"}
-                    size="icon"
-                    className={cn("rounded-xl h-12 w-12 flex-shrink-0", isListening && "animate-pulse")}
-                    onClick={isListening ? stopListening : startListening}
-                    disabled={isLoading}
-                    title={isListening ? "Stop listening" : "Speak your query"}
-                  >
-                    <Mic className="h-4 w-4" />
-                  </Button>
-                )}
+            {/* Input area */}
+            <div className="border-t border-border p-4">
+              <div className={cn(
+                "flex items-end gap-3 bg-muted/50 rounded-2xl px-4 py-3 transition-all",
+                "focus-within:bg-muted focus-within:ring-1 focus-within:ring-primary/30"
+              )}>
                 <textarea
                   ref={textareaRef}
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder={isListening ? "Listening..." : "Ask about prices, predictions, or tips..."}
-                  className="flex-1 resize-none rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background min-h-[48px] max-h-[120px] transition-colors"
+                  onChange={e => setInputValue(e.target.value)}
+                  onKeyDown={handleKey}
+                  placeholder="Ask about prices, predictions, market tips..."
                   rows={1}
-                  disabled={isLoading}
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground resize-none outline-none max-h-32 leading-relaxed"
+                  style={{ minHeight: "24px" }}
                 />
-                <Button
-                  onClick={() => handleSend()}
-                  disabled={!inputValue.trim() || isLoading}
-                  className="btn-primary px-4 rounded-xl h-12"
-                >
-                  {isLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
+                <div className="flex items-center gap-2 shrink-0">
+                  {micSupported && (
+                    <button onClick={isListening ? stopListening : startListening}
+                      className={cn(
+                        "p-2 rounded-xl transition-all",
+                        isListening
+                          ? "bg-red-500/10 text-red-500 animate-pulse"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      )}>
+                      {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    </button>
                   )}
-                </Button>
+                  <button onClick={handleSend}
+                    disabled={!inputValue.trim() || isLoading}
+                    className={cn(
+                      "p-2 rounded-xl transition-all",
+                      inputValue.trim() && !isLoading
+                        ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                        : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                    )}>
+                    {isLoading
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Send className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
-              <p className="text-[10px] text-muted-foreground text-center mt-2">
-                AI can make mistakes. Verify important decisions with local experts.
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                Powered by Claude AI · Real-time Tamil Nadu market data
               </p>
             </div>
           </div>
