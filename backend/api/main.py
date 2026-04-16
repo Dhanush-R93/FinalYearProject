@@ -510,15 +510,10 @@ async def get_agri_news():
         today = datetime.now()
         month = today.strftime("%B")
 
-        # Get latest prices for context
-        from supabase import create_client
-        sb = create_client(
-            os.getenv("SUPABASE_URL", ""),
-            os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-        )
-        price_res = sb.table("price_data")\
+        # Get latest prices using the already-initialised top-level client
+        price_res = supabase_client.table("price_data")\
             .select("price, mandi_location, commodities(name)")\
-            .gte("recorded_at", (today.date() - timedelta(days=2)).isoformat())\
+            .gte("recorded_at", (today.date() - timedelta(days=3)).isoformat())\
             .eq("source", "agmarknet_gov_in")\
             .order("recorded_at", desc=True)\
             .limit(30)\
