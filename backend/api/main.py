@@ -470,14 +470,14 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     """Stream AI chat response using Anthropic Claude."""
-    try:
-        api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        if not api_key or api_key == "skip":
-            raise HTTPException(400, "ANTHROPIC_API_KEY not configured in backend .env")
+    import json as _json
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key or api_key == "skip":
+        raise HTTPException(400, "ANTHROPIC_API_KEY not configured in backend .env")
 
-        client = anthropic_sdk.Anthropic(api_key=api_key)
-
-        def generate():
+    async def generate():
+        try:
+            client = anthropic_sdk.Anthropic(api_key=api_key)
             with client.messages.stream(
                 model="claude-sonnet-4-20250514",
                 max_tokens=1024,
@@ -485,23 +485,17 @@ async def chat_endpoint(req: ChatRequest):
                 messages=[{"role": m["role"], "content": m["content"]} for m in req.messages],
             ) as stream:
                 for text in stream.text_stream:
-                    import json
-                    yield f"data: {json.dumps({'delta': {'text': text}})}\n\n"
+                    yield f"data: {_json.dumps({'delta': {'text': text}})}\n\n"
             yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"Chat stream error: {e}")
+            yield f"data: {_json.dumps({'error': str(e)})}\n\n"
 
-        return StreamingResponse(
-            generate(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"/chat failed: {e}")
-        raise HTTPException(500, str(e))
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 # ──────────────────────────────────────────────────────────────
