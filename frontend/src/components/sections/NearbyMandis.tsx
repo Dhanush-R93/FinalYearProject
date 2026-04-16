@@ -82,10 +82,22 @@ export function NearbyMandis() {
 
       if (!rows?.length) { setLoading(false); return; }
 
-      // Deduplicate by mandi_name keeping latest
+      // Deduplicate by normalized mandi name (strip variety/type in parentheses)
+      const normalizeName = (name: string) =>
+        name.replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
       const seen = new Map<string,any>();
       for (const r of rows) {
-        if (!seen.has(r.mandi_name)) seen.set(r.mandi_name, r);
+        const key = normalizeName(r.mandi_name || '');
+        const existing = seen.get(key);
+        if (!existing) {
+          seen.set(key, r);
+        } else {
+          // Prefer more recent record
+          if (new Date(r.recorded_at) > new Date(existing.recorded_at)) {
+            seen.set(key, r);
+          }
+        }
       }
 
       const sorted = Array.from(seen.values())
