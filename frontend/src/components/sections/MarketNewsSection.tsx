@@ -32,7 +32,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 async function fetchAgriNews(): Promise<NewsItem[]> {
   try {
     // Try backend news endpoint
-    const r = await fetch("http://localhost:8000/news/agri", { signal: AbortSignal.timeout(5000) });
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+    const r = await fetch(`${backendUrl}/news/agri`, { signal: AbortSignal.timeout(4000) });
     if (r.ok) {
       const data = await r.json();
       if (data.news?.length > 0) return data.news;

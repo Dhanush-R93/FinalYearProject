@@ -178,16 +178,17 @@ export function WeatherSection() {
     const nearby = config.nearby.slice(0, 4);
     const allDistricts = [district, ...nearby];
 
-    const results = await Promise.all(
-      allDistricts.map(d => {
-        const coords = ALL_DISTRICTS[d] || config;
-        return fetchWeather(d, coords);
-      })
-    );
+    // Sequential calls with delay to avoid Open-Meteo 429 rate limit
+    const results: WeatherData[] = [];
+    for (const d of allDistricts) {
+      const coords = ALL_DISTRICTS[d] || config;
+      const w = await fetchWeather(d, coords);
+      if (w) results.push(w);
+      await new Promise(r => setTimeout(r, 400));
+    }
 
-    const valid = results.filter(Boolean) as WeatherData[];
-    if (valid.length > 0) valid[0].isMain = true;
-    setWeatherList(valid);
+    if (results.length > 0) results[0].isMain = true;
+    setWeatherList(results);
     setLastUpdated(new Date());
     setLoading(false);
   };

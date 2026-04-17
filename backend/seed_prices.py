@@ -168,7 +168,8 @@ def save_instantly(rows: list) -> int:
         try:
             result = supabase.table("price_data").upsert(
                 batch,
-                on_conflict="commodity_id,mandi_name,recorded_at"
+                on_conflict="commodity_id,mandi_name,recorded_at",
+                ignore_duplicates=False
             ).execute()
             saved += len(result.data) if result.data else len(batch)
         except Exception as e:
@@ -262,11 +263,14 @@ def fill_gap_for_date(target_date: date, commodity_ids: dict):
     # Save all interpolated rows
     for row in rows_to_save:
         try:
-            supabase.table("price_data").insert(row).execute()
+            supabase.table("price_data").upsert(
+                row,
+                on_conflict="commodity_id,mandi_name,recorded_at",
+                ignore_duplicates=True
+            ).execute()
             filled += 1
-        except Exception as e:
-            if "duplicate" not in str(e).lower() and "21000" not in str(e):
-                pass
+        except Exception:
+            pass
     return filled
 
 # ── Main ────────────────────────────────────────────────────

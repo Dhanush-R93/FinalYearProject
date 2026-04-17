@@ -141,16 +141,17 @@ export function MandiPriceForecast() {
         if (!districtPrices[d] || districtPrices[d] === 0) districtPrices[d] = avgPrice;
       }
 
-      // Fetch 10-day weather for each district in parallel
+      // Fetch weather sequentially with delay to avoid 429 rate limit
       const weatherByDistrict: Record<string, WeatherDay[]> = {};
-      await Promise.all(districts.map(async (district) => {
+      for (const district of districts) {
         const coords = DISTRICT_COORDS[district];
         if (coords) {
           weatherByDistrict[district] = await fetchWeather10Days(coords[0], coords[1]);
+          await new Promise(r => setTimeout(r, 400));
         } else {
           weatherByDistrict[district] = Array(10).fill({ rain: 0, temp: 30 });
         }
-      }));
+      }
 
       // Generate 10-day predictions using weather
       const impactFn = WEATHER_IMPACT[veg] || (() => 1.0);

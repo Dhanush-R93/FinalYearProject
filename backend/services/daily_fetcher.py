@@ -159,26 +159,33 @@ def build_rows(records: list, commodity_ids: dict, fetch_date: date) -> list:
 
 
 def save_batch_to_db(supabase, rows: list) -> int:
-    """Save rows to DB in batches of 100"""
+    """Save rows to DB using upsert - always update on conflict"""
+    if not rows:
+        return 0
     saved = 0
-    for i in range(0, len(rows), 100):
-        batch = rows[i:i+100]
+    batch_size = 50  # smaller batches = more reliable
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i:i+batch_size]
         try:
+            # Use upsert with ignore_duplicates=False to UPDATE existing records
             result = supabase.table("price_data").upsert(
                 batch,
-                on_conflict="commodity_id,mandi_name,recorded_at"
+                on_conflict="commodity_id,mandi_name,recorded_at",
+                ignore_duplicates=False
             ).execute()
-            saved += len(result.data) if result.data else len(batch)
+            saved += len(batch)
         except Exception as e:
-            # Fallback: insert one by one
+            logger.warning(f"Batch upsert failed: {str(e)[:80]}, trying individually...")
             for row in batch:
                 try:
-                    supabase.table("price_data").insert(row).execute()
+                    supabase.table("price_data").upsert(
+                        row,
+                        on_conflict="commodity_id,mandi_name,recorded_at",
+                        ignore_duplicates=False
+                    ).execute()
                     saved += 1
                 except Exception as e2:
-                    err = str(e2)
-                    if "duplicate" not in err.lower() and "21000" not in err:
-                        logger.warning(f"Save error: {err[:60]}")
+                    logger.debug(f"Row skip: {str(e2)[:60]}")
     return saved
 
 
