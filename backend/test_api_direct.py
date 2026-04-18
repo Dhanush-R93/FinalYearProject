@@ -1,36 +1,38 @@
-"""Test data.gov.in API and show why seed_prices fails"""
+"""Test multiple dates to see which ones have TN data"""
 import httpx
 import asyncio
+from datetime import date, timedelta
 
 API_KEY = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
 URL = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
 
-async def test():
-    print("Testing data.gov.in API with records filter...")
+async def test_date(client, d: date):
+    date_str = d.strftime("%d/%m/%Y")
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.get(URL, params={
-                "api-key": API_KEY,
-                "format": "json",
-                "limit": 10,
-                "offset": 0,
-                "filters[arrival_date]": "18/04/2026",
-            })
-            print(f"Status: {r.status_code}")
-            data = r.json()
-            total = data.get("total", 0)
-            records = data.get("records", [])
-            print(f"Total records: {total}")
-            print(f"Records returned: {len(records)}")
-            if records:
-                print(f"First record: {records[0]}")
-                tn = [r for r in records if "Tamil" in str(r.get("state",""))]
-                print(f"TN records in first 10: {len(tn)}")
-            else:
-                print("NO RECORDS RETURNED — checking error:")
-                print(data)
+        r = await client.get(URL, params={
+            "api-key": API_KEY,
+            "format": "json",
+            "limit": 100,
+            "offset": 0,
+            "filters[arrival_date]": date_str,
+        })
+        data = r.json()
+        total = int(data.get("total", 0))
+        records = data.get("records", [])
+        tn = [r for r in records if "Tamil" in str(r.get("state",""))]
+        return total, len(tn)
     except Exception as e:
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error detail: {e}")
+        return -1, str(e)
+
+async def test():
+    today = date.today()
+    print(f"{'Date':<15} {'Total':>8} {'TN in 100':>12}")
+    print("-" * 40)
+    async with httpx.AsyncClient(timeout=30) as client:
+        for i in range(7):
+            d = today - timedelta(days=i)
+            total, tn = await test_date(client, d)
+            print(f"{d.isoformat():<15} {total:>8} {str(tn):>12}")
+            await asyncio.sleep(0.5)
 
 asyncio.run(test())
