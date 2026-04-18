@@ -69,8 +69,8 @@ export function NearbyMandis() {
         .from("commodities").select("id").eq("name", veg).single();
       if (!comm) { setLoading(false); return; }
 
-      // Last 30 days to get enough data
-      const from = new Date(Date.now()-30*86400000).toISOString().split("T")[0];
+      // Only last 3 days — skip stale markets
+      const from = new Date(Date.now()-3*86400000).toISOString().split("T")[0];
       const { data: rows } = await supabase
         .from("price_data")
         .select("price,min_price,max_price,mandi_name,mandi_location,recorded_at,source")
