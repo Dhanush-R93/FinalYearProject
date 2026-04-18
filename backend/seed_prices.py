@@ -101,13 +101,13 @@ async def fetch_day(client: httpx.AsyncClient, target_date: date, attempt: int =
         if attempt < 3:
             await asyncio.sleep(attempt * 3)
             return await fetch_day(client, target_date, attempt + 1)
-        return []
+        return None  # None = real failure
 
     except Exception as e:
         if attempt < 3:
             await asyncio.sleep(attempt * 3)
             return await fetch_day(client, target_date, attempt + 1)
-        return []
+        return None  # None = real failure
 
 
 # ── Step 3: Build DB rows ───────────────────────────────────
@@ -307,6 +307,11 @@ async def seed():
 
             # ── Fetch from API ──────────────────────────
             records = await fetch_day(client, d)
+
+            if records is not None and len(records) == 0:
+                print(f"⚠️  No TN records from API today (govt upload pending) — using existing DB data")
+                stats["skipped"] += 1
+                continue
 
             if records:
                 # ── Build rows ──────────────────────────
