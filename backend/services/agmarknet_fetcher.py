@@ -19,7 +19,7 @@ PUBLIC_BASE          = "https://api.data.gov.in/resource"
 AGMARKNET_RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
 
 _env_key = os.getenv("DATA_GOV_API_KEY", "").strip()
-REAL_KEY  = "579b464db66ec23bdd0000012d47711ee53044e56bcdf3b6582e0672"
+REAL_KEY  = "579b464db66ec23bdd000001cac9e21c88cc4f8253367423518fcba0"
 API_KEY   = _env_key if (_env_key and _env_key not in ("", "YOUR_DATA_GOV_IN_API_KEY")) else REAL_KEY
 
 try:
