@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { MapPin, Loader2, Navigation, RefreshCw, Search, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
-import { formatDistanceToNow } from "date-fns";
 
 const VEGETABLES = [
   {name:"Tomato",emoji:"🍅"},{name:"Onion",emoji:"🧅"},{name:"Potato",emoji:"🥔"},
@@ -69,8 +68,8 @@ export function NearbyMandis() {
         .from("commodities").select("id").eq("name", veg).single();
       if (!comm) { setLoading(false); return; }
 
-      // Only last 3 days — skip stale markets
-      const from = new Date(Date.now()-3*86400000).toISOString().split("T")[0];
+      // Show latest available data regardless of age
+      const from = new Date(Date.now()-30*86400000).toISOString().split("T")[0];
       const { data: rows } = await supabase
         .from("price_data")
         .select("price,min_price,max_price,mandi_name,mandi_location,recorded_at,source")
@@ -274,7 +273,7 @@ export function NearbyMandis() {
               {/* Column headers */}
               <div className="grid grid-cols-12 px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border bg-muted/10">
                 <div className="col-span-1">#</div>
-                <div className="col-span-5">Market Name</div>
+                <div className="col-span-6">Market Name</div>
                 <div className="col-span-2 text-right">Price/kg</div>
                 <div className="col-span-2 text-right">Range</div>
                 <div className="col-span-2 text-right">Updated</div>
@@ -302,7 +301,7 @@ export function NearbyMandis() {
                       </div>
                     </div>
 
-                    <div className="col-span-5">
+                    <div className="col-span-6">
                       <div className="flex items-center gap-2">
                         <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
                         <div>

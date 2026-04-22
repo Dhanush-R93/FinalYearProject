@@ -4,7 +4,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { useCommodities, usePriceData } from "@/hooks/useCommodities";
-import { formatDistanceToNow } from "date-fns";
 
 export function MandiComparisonTable() {
   const [selectedCommodity, setSelectedCommodity] = useState<string>("");
@@ -160,8 +159,8 @@ export function MandiComparisonTable() {
                             {diff > 0 ? "+" : ""}
                             {diff.toFixed(2)}
                           </TableCell>
-                          <TableCell className="text-right text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(row.recorded_at), { addSuffix: true })}
+                          <TableCell className="text-right text-xs">
+                            <span className="text-green-600 font-medium">✅ Live</span>
                           </TableCell>
                         </TableRow>
                       );

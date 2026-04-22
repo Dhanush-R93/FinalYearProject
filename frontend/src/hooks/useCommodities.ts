@@ -58,7 +58,6 @@ export function useLatestPrices(location?: string) {
         .from("price_data")
         .select(`*, commodities(id, name, icon, unit, category)`)
         .in("source", ["agmarknet_gov_in", "interpolated", "simulated"])
-        .gte("recorded_at", new Date(Date.now()-7*86400000).toISOString().split("T")[0])
         .order("recorded_at", { ascending: false })
         .limit(2000);
 
