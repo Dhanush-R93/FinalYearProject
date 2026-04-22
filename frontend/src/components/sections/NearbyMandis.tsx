@@ -287,7 +287,7 @@ export function NearbyMandis() {
                 const isLive = m.source==="agmarknet_gov_in";
                 const vsAvg = Math.round((price-avgPrice)*100)/100;
                 const cleanName = m.mandi_name?.replace(/\s*\(Uzhavar Sandhai\s*\)\s*/gi,' ').replace(/\s*\([^)]*\)\s*/g,' ').replace(/APMC\s*$/,'APMC').trim();
-                const timeAgo = m.recorded_at ? formatDistanceToNow(new Date(m.recorded_at),{addSuffix:true}) : "—";
+
 
                 return (
                   <div key={i} className={cn(
